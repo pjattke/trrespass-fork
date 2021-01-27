@@ -668,6 +668,125 @@ int assisted_double_sided_test(HammerSuite * suite)
 	free(h_patt.d_lst);
 }
 
+void benchmark_best_pattern(SessionConfig *cfg, MemoryBuffer *mem, int d, int v)
+{
+	srand(CL_SEED);
+
+	DRAMAddr d_base = phys_2_dram(virt_2_phys(mem->buffer, mem));
+	d_base.bank = random_int(0, get_banks_cnt() - 1);
+	fprintf(stderr, "[INFO] benchmark_best_pattern started.\n");
+	fprintf(stderr, "[INFO] d_base.row: %lu\n", d_base.row);
+	fflush(stderr);
+
+	// TODO: uncomment this!!
+	// const int mem_to_hammer = 256 << 20; // 256 MB 
+	const int mem_to_hammer = 4 << 20; // 4 MB
+	const int n_rows = mem_to_hammer / ((8 << 10) * get_banks_cnt());
+
+	/* Init FILES */
+	create_dir(DATA_DIR);
+	char *out_name = (char *)malloc(500);
+	char rows_str[10];
+	strcpy(out_name, DATA_DIR);
+	strcat(out_name, p->g_out_prefix);
+	strcat(out_name, ".");
+	strcat(out_name, "fuzzing");
+	strcat(out_name, ".");
+	sprintf(rows_str, "%08ld", d_base.row);
+	strcat(out_name, rows_str);
+	strcat(out_name, ".");
+	sprintf(rows_str, "%ld", cfg->h_rounds);
+	strcat(out_name, rows_str);
+	strcat(out_name, ".");
+	strcat(out_name, REFRESH_VAL);
+	strcat(out_name, ".csv");
+	if (p->g_flags & F_NO_OVERWRITE)
+	{
+		int cnt = 0;
+		char *tmp_name = (char *)malloc(500);
+		strncpy(tmp_name, out_name, strlen(out_name));
+		while (access(tmp_name, F_OK) != -1)
+		{
+			cnt++;
+			sprintf(tmp_name, "%s.%02d", out_name, cnt);
+		}
+		strncpy(out_name, tmp_name, strlen(tmp_name));
+		free(tmp_name);
+	}
+	out_fd = fopen(out_name, "w+");
+	assert(out_fd != NULL);
+
+	HammerSuite *suite = (HammerSuite *)malloc(sizeof(HammerSuite));
+	suite->mem = mem;
+	suite->cfg = cfg;
+	suite->d_base = d_base;
+	suite->mapper = (ADDRMapper *)malloc(sizeof(ADDRMapper));
+	init_addr_mapper(suite->mapper, mem, &suite->d_base, cfg->h_rows);
+
+	int i;
+	HammerPattern h_patt;
+	h_patt.rounds = cfg->h_rounds;
+	h_patt.len = cfg->aggr_n;
+
+	h_patt.d_lst = (DRAMAddr *)malloc(sizeof(DRAMAddr) * h_patt.len);
+	memset(h_patt.d_lst, 0x00, sizeof(DRAMAddr) * h_patt.len);
+	
+	h_patt.d_lst[0] = suite->d_base;
+	h_patt.d_lst[0].row = suite->d_base.row;
+
+	h_patt.d_lst[1] = suite->d_base;
+	h_patt.d_lst[1].row = h_patt.d_lst[0].row + v + 1;
+	for (i = 2; i < h_patt.len - 1; i += 2)
+	{
+		h_patt.d_lst[i] = suite->d_base;
+		h_patt.d_lst[i].bank = suite->d_base.bank;
+		h_patt.d_lst[i].row = h_patt.d_lst[i - 1].row + d + 1;
+		h_patt.d_lst[i + 1] = suite->d_base;
+		h_patt.d_lst[i + 1].bank = suite->d_base.bank;
+		h_patt.d_lst[i + 1].row = h_patt.d_lst[i].row + v + 1;
+	}
+	if (h_patt.len % 2)
+	{
+		h_patt.d_lst[h_patt.len - 1] = suite->d_base;
+		h_patt.d_lst[h_patt.len - 1].bank = suite->d_base.bank;
+		h_patt.d_lst[h_patt.len - 1].row = h_patt.d_lst[h_patt.len - 2].row + d + 1;
+	}
+
+	for (int row_offt = 0; row_offt < n_rows; row_offt++)
+	{
+		init_chunk(suite);
+
+		for (i = 0; i < h_patt.len; i += 1)
+		{
+			h_patt.d_lst[i].row += 1;
+		}
+
+		fprintf(stderr, "[HAMMER] - %s: ", hPatt_2_str(&h_patt, ROW_FIELD));
+
+#ifdef FLIPTABLE
+		print_start_attack(&h_patt);
+#endif
+		for (int idx = 0; idx < h_patt.len; idx++)
+			fill_row(suite, &h_patt.d_lst[idx], suite->cfg->d_cfg, 0);
+
+		uint64_t time = hammer_it(&h_patt, suite->mem);
+		fprintf(stderr, "%lu ", time);
+
+		scan_rows(suite, &h_patt, 0);
+		for (int idx = 0; idx < h_patt.len; idx++)
+		{
+			fill_row(suite, &h_patt.d_lst[idx], suite->cfg->d_cfg, 1);
+		}
+
+#ifdef FLIPTABLE
+		print_end_attack();
+#endif
+
+		fprintf(stderr, "\n");
+	}
+		free(h_patt.d_lst);
+}
+
 int n_sided_test(HammerSuite * suite)
 {
 	MemoryBuffer *mem = suite->mem;
@@ -785,7 +904,7 @@ void fuzz(HammerSuite *suite, int d, int v)
 		print_end_attack();
 #endif
 	}
-	fprintf(stdout, "\n");
+	fprintf(stderr, "\n");
 	free(h_patt.d_lst);
 }
 

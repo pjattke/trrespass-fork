@@ -105,6 +105,8 @@ int main(int argc, char **argv)
 
 	if (p->fuzzing) {
 		fuzzing_session(&s_cfg, &mem);
+	} else if (p->inter_dist != -1 && p->intra_dist != -1) {
+		benchmark_best_pattern(&s_cfg, &mem, p->intra_dist, p->inter_dist);
 	} else {
 		hammer_session(&s_cfg, &mem);
 	}
