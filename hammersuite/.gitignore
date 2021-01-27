@@ -1,3 +1,4 @@
 *.log
 src/.obj/*
 obj/*
+data/*
