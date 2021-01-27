@@ -24,9 +24,7 @@ all: $(OUT)
 SOURCES := $(wildcard $(SDIR)/*.c)
 OBJECTS := $(patsubst $(SDIR)/%.c, $(ODIR)/%.o, $(SOURCES))
 
-ifndef NUM_RANKS
-	$(error Compilation expects passing NUM_RANKS, e.g., make NUM_RANKS=1.)
-endif	
+# NOTE: Compiling requires passing NUM_RANKS, e.g., make NUM_RANKS=1.
 
 $(ODIR)/%.o: $(SDIR)/%.c
 	mkdir -p $(ODIR)
