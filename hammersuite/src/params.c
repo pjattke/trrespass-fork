@@ -53,6 +53,8 @@ void print_usage(char *bin_name)
 	fprintf(stderr, "\t-T --target-pattern\t= hex value for the target pattern\n");
 	fprintf(stderr, "\t-f --fuzzing\t\t= Start fuzzing (--aggr will be ignored)\n");
 	fprintf(stderr, "\t-t --threshold\t\t= Align the hammering to refresh ops,\n\t\t\t\t looking at the memory latency in CPU cycles.\t(default: 0)\n");
+	fprintf(stderr, "\t-x\t\t= number of rows in between of aggressors in an aggressor pair\n");
+	fprintf(stderr, "\t-y\t\t= number of rows in between of aggressor pairs\n");
 }
 
 static int str2pat(const char *str, char **pat)
@@ -102,6 +104,8 @@ int process_argv(int argc, char *argv[], ProfileParams *p)
 	p->huge_file = (char *)HUGETLB_std;
 	p->conf_file = (char *)CONFIG_NAME_std;
 	p->aggr      = AGGR_std;
+	p->intra_dist = -1;
+	p->inter_dist = -1;
 
 
 	const struct option long_options[] = {
@@ -118,6 +122,8 @@ int process_argv(int argc, char *argv[], ProfileParams *p)
 		{.name = "aggr",.has_arg = required_argument,.flag = NULL,.val='a'},
 		{.name = "fuzzing",.has_arg = no_argument,.flag = &p->fuzzing,.val = 1},
 		{.name = "threshold",.has_arg = required_argument,.flag = NULL,.val = 't'},
+		{.name = "intra_dist",.has_arg = required_argument,.flag = NULL,.val = 'x'},
+		{.name = "inter_dist",.has_arg = required_argument,.flag = NULL,.val = 'y'},
 		{0, 0, 0, 0}
 	};
 
@@ -127,7 +133,7 @@ int process_argv(int argc, char *argv[], ProfileParams *p)
 	while (1) {
 		int this_option_optind = optind ? optind : 1;
 		int option_index = 0;
-		int arg = getopt_long(argc, argv, "o:d:r:hvV:T:a:ft:",
+		int arg = getopt_long(argc, argv, "o:d:r:hvV:T:a:ft:x:y:",
 				      long_options, &option_index);
 
 		if (arg == -1)
@@ -197,6 +203,12 @@ int process_argv(int argc, char *argv[], ProfileParams *p)
 			break;
 		case 't':
 			p->threshold = atoi(optarg);
+			break;
+		case 'x':
+			p->intra_dist = atoi(optarg);
+			break;
+		case 'y':
+			p->inter_dist = atoi(optarg);
 			break;
 		case 'h':
 		default:

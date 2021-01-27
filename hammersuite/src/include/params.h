@@ -35,6 +35,8 @@ typedef struct ProfileParams {
 	int		 huge_fd;
 	char     *conf_file		= (char *)CONFIG_NAME_std;
 	int 	 aggr			= AGGR_std;
+	int      inter_dist     = -1;
+	int      intra_dist     = -1;
 } ProfileParams;
 
 int process_argv(int argc, char *argv[], ProfileParams *params);
