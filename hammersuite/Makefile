@@ -30,6 +30,7 @@ $(ODIR)/%.o: $(SDIR)/%.c
 
 
 $(OUT): $(OBJECTS)
+	mkdir -p $(DATA_DIR)
 	mkdir -p $(BUILD)
 	$(CXX) -o $(BUILD)/$@ $^ $(CFLAGS) $(LDFLAGS) $(LDEPS)
 	chmod +x $(BUILD)/$@
