@@ -678,9 +678,7 @@ void benchmark_best_pattern(SessionConfig *cfg, MemoryBuffer *mem, int d, int v)
 	fprintf(stderr, "[INFO] d_base.row: %lu\n", d_base.row);
 	fflush(stderr);
 
-	// TODO: uncomment this!!
-	// const int mem_to_hammer = 256 << 20; // 256 MB 
-	const int mem_to_hammer = 4 << 20; // 4 MB
+	const int mem_to_hammer = 256 << 20; // 256 MB 
 	const int n_rows = mem_to_hammer / ((8 << 10) * get_banks_cnt());
 
 	/* Init FILES */
