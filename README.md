@@ -1,3 +1,6 @@
+**NOTE:** This is an UNMAINTAINED fork of TRRespass with some minor extensions/fixes.
+---
+
 # TRRespass 
 
 This is the repository for the TRRespass Rowhammer fuzzer. Recent DDR4 chips include on-chip TRR mitigations that stop bit flips using standard Rowhammer access patterns such as double-sided, single sided or one-location hammering. TRRespass automatically discovers novel Many-sided Rowhammer variants that can bypass these mitigations and trigger bit flips on the recent systems with DDR4 memory. TRRespass requires the DRAM address mapping functions to work effectively.
