@@ -6,7 +6,8 @@ ODIR=src/.obj
 DATA_DIR=$(PWD)/data/
 
 CFLAGS=-I$(IDIR) -msse4.2 -ggdb -DDATA_DIR=\"$(DATA_DIR)\"
-# CXX=g++
+C=gcc-8
+CXX=g++-8
 LDFLAGS=
 
 OUT=tester
