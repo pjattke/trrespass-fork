@@ -3,7 +3,7 @@ IDIR=$(SDIR)/include
 LDIR=lib
 BUILD=obj
 ODIR=src/.obj
-DATA_DIR=$(PWD)/data/
+DATA_DIR=$(shell pwd)/data/
 
 CFLAGS=-I$(IDIR) -msse4.2 -ggdb -DDATA_DIR=\"$(DATA_DIR)\"
 C=gcc-8
