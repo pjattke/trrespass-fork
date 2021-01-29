@@ -37,6 +37,7 @@ typedef struct ProfileParams {
 	int 	 aggr			= AGGR_std;
 	int      inter_dist     = -1;
 	int      intra_dist     = -1;
+	int      bank     		= -1;
 } ProfileParams;
 
 int process_argv(int argc, char *argv[], ProfileParams *params);

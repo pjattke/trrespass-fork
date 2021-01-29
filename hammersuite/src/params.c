@@ -55,6 +55,7 @@ void print_usage(char *bin_name)
 	fprintf(stderr, "\t-t --threshold\t\t= Align the hammering to refresh ops,\n\t\t\t\t looking at the memory latency in CPU cycles.\t(default: 0)\n");
 	fprintf(stderr, "\t-x\t\t= number of rows in between of aggressors in an aggressor pair\n");
 	fprintf(stderr, "\t-y\t\t= number of rows in between of aggressor pairs\n");
+	fprintf(stderr, "\t-b\t\t= the bank to be used for hammering\n");
 }
 
 static int str2pat(const char *str, char **pat)
@@ -106,7 +107,7 @@ int process_argv(int argc, char *argv[], ProfileParams *p)
 	p->aggr      = AGGR_std;
 	p->intra_dist = -1;
 	p->inter_dist = -1;
-
+	p->bank = -1;
 
 	const struct option long_options[] = {
 		/* These options set a flag. */
@@ -124,6 +125,7 @@ int process_argv(int argc, char *argv[], ProfileParams *p)
 		{.name = "threshold",.has_arg = required_argument,.flag = NULL,.val = 't'},
 		{.name = "intra_dist",.has_arg = required_argument,.flag = NULL,.val = 'x'},
 		{.name = "inter_dist",.has_arg = required_argument,.flag = NULL,.val = 'y'},
+		{.name = "bank",.has_arg = required_argument,.flag = NULL,.val = 'b'},
 		{0, 0, 0, 0}
 	};
 
@@ -133,7 +135,7 @@ int process_argv(int argc, char *argv[], ProfileParams *p)
 	while (1) {
 		int this_option_optind = optind ? optind : 1;
 		int option_index = 0;
-		int arg = getopt_long(argc, argv, "o:d:r:hvV:T:a:ft:x:y:",
+		int arg = getopt_long(argc, argv, "o:d:r:hvV:T:a:ft:x:y:b:",
 				      long_options, &option_index);
 
 		if (arg == -1)
@@ -209,6 +211,9 @@ int process_argv(int argc, char *argv[], ProfileParams *p)
 			break;
 		case 'y':
 			p->inter_dist = atoi(optarg);
+			break;
+		case 'b':
+			p->bank = atoi(optarg);
 			break;
 		case 'h':
 		default:

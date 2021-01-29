@@ -668,12 +668,12 @@ int assisted_double_sided_test(HammerSuite * suite)
 	free(h_patt.d_lst);
 }
 
-void benchmark_best_pattern(SessionConfig *cfg, MemoryBuffer *mem, int d, int v)
+void benchmark_best_pattern(SessionConfig *cfg, MemoryBuffer *mem, int d, int v, int bank_no)
 {
 	srand(CL_SEED);
 
 	DRAMAddr d_base = phys_2_dram(virt_2_phys(mem->buffer, mem));
-	d_base.bank = random_int(0, get_banks_cnt() - 1);
+	d_base.bank = bank_no;
 	fprintf(stderr, "[INFO] benchmark_best_pattern started.\n");
 	fprintf(stderr, "[INFO] d_base.row: %lu\n", d_base.row);
 	fflush(stderr);
