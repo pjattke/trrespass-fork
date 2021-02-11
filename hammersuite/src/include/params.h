@@ -26,7 +26,8 @@ typedef struct ProfileParams {
 	char	*tpat			= (char *)NULL;
 	char 	*vpat			= (char *)NULL;
 	int		 threshold		= 0;
-	int 	fuzzing         = 0;		// start fuzzing!!
+	int 	fuzzing         = 0;	// start fuzzing!!
+	int 	random          = 0;	// do fuzzing with random agg pair
 	size_t   m_size			= ALLOC_SIZE;
 	size_t   m_align 		= ALIGN_std;
 	size_t   rounds			= ROUNDS_std;
@@ -38,6 +39,7 @@ typedef struct ProfileParams {
 	int      inter_dist     = -1;
 	int      intra_dist     = -1;
 	int      bank     		= -1;
+	int      hammer_count   = -1;
 } ProfileParams;
 
 int process_argv(int argc, char *argv[], ProfileParams *params);

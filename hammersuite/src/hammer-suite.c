@@ -76,6 +76,7 @@ char *cl_rand_gen(DRAMAddr * d_addr)
 typedef struct {
 	DRAMAddr *d_lst;
 	size_t len;
+	size_t original_length;
 	size_t rounds;
 } HammerPattern;
 
@@ -127,16 +128,20 @@ char *dAddr_2_str(DRAMAddr d_addr, uint8_t fields)
 
 char *hPatt_2_str(HammerPattern * h_patt, int fields)
 {
-#define STR_LEN_PATT 512
+#define STR_LEN_PATT 1024
 	static char patt_str[STR_LEN_PATT];
 	char *dAddr_str;
 
 	memset(patt_str, 0x00, STR_LEN_PATT);
 
-	for (int i = 0; i < h_patt->len; i++) {
+	// for compatibility with fuzz(...) method
+	// int len = (h_patt->original_length == 0) ? h_patt->len : h_patt->original_length;
+	int len = h_patt->len;
+
+	for (int i = 0; i < len; i++) {
 		dAddr_str = dAddr_2_str(h_patt->d_lst[i], fields);
 		strcat(patt_str, dAddr_str);
-		if (i + 1 != h_patt->len) {
+		if (i + 1 != len) {
 			strcat(patt_str, "/");
 		}
 
@@ -245,8 +250,85 @@ uint64_t hammer_it(HammerPattern* patt, MemoryBuffer* mem) {
 
 	free(v_lst);
 	return (cl1-cl0) / 1000000;
-
 }
+
+uint64_t hammer_it_random(HammerPattern* patt, MemoryBuffer* mem, int special_aggs_target_hc, bool flush_early) {
+	size_t idx;
+	uint64_t special_aggs_cnt = 0;
+	
+	// the probability that we will add special aggressor accesses
+	int probability = (int)ceil(((float)patt->rounds/(float)special_aggs_target_hc));
+
+	char** v_lst = (char**) malloc(sizeof(char*)*patt->len);
+	for (size_t i = 0; i < patt->len; i++) {
+		v_lst[i] = phys_2_virt(dram_2_phys(patt->d_lst[i]), mem);
+	}
+
+	sched_yield();
+	if (p->threshold > 0) {
+		uint64_t t0 = 0, t1 = 0;
+		// Threshold value depends on your system
+		while (abs((int64_t) t1 - (int64_t) t0) < p->threshold) {
+			t0 = rdtscp();
+			*(volatile char *)v_lst[0];
+			clflushopt(v_lst[0]);
+			t1 = rdtscp();
+		}
+	}
+
+	uint64_t cl0, cl1;
+	cl0 = realtime_now();
+	for ( int i = 0; i < patt->rounds;  i++) {
+		mfence();
+		if (special_aggs_cnt < special_aggs_target_hc && (random_int(0,patt->rounds) % probability) == 0) {
+			special_aggs_cnt++;
+			// define where (i.e., before which access) to interrupt the pattern; we then replace these accesses
+			// by the accesses to the special aggressors
+			idx = random_int(0, patt->original_length);
+
+			/* hammering */
+			// do accesses up to index idx
+			size_t j;
+			for (j = 0; j < idx; j++) {
+				*(volatile char*) v_lst[j];
+				if (flush_early) clflushopt(v_lst[j]);
+			}
+			// do accesses to special aggressors
+			for (size_t k = patt->original_length; k < patt->len; k++) {
+				*(volatile char*) v_lst[k];
+				if (flush_early) clflushopt(v_lst[k]);
+				j++;
+			}
+			// do accesses from index idx+(num_special_aggs) up to end of pattern
+			for (; j < patt->original_length; j++) {
+				*(volatile char*) v_lst[j];
+				if (flush_early) clflushopt(v_lst[j]);
+			}
+
+			/* flushing */
+			if (!flush_early) {
+				for (size_t j = 0; j < patt->len; j++) {
+					clflushopt(v_lst[j]);
+				}
+			}
+		} else {
+			for (size_t j = 0; j < patt->original_length; j++) {
+				*(volatile char*) v_lst[j];
+				if (flush_early) clflushopt(v_lst[j]);
+			}
+			if (!flush_early) {
+				for (size_t j = 0; j < patt->original_length; j++) {
+					clflushopt(v_lst[j]);
+				}
+			}
+		}
+	}
+	cl1 = realtime_now();
+	free(v_lst);
+
+	return (cl1-cl0) / 1000000;
+}
+
 
 void __test_fill_random(char *addr, size_t size)
 {
@@ -848,6 +930,108 @@ int n_sided_test(HammerSuite * suite)
 	free(h_patt.d_lst);
 }
 
+void fuzz_random(HammerSuite *suite, int d, int v, int n2, int hammer_count)
+{
+	/* 
+	 * The idea of this method is that we take the original TRRespass-generated pattern and inject at random times 
+	 * accesses to a previously chosen n-sided aggressor pair at a different location. A probability decides when we 
+	 * do access this aggressor pair.
+	 * 
+	 * The parameters of this method are:
+	 * - d: the inter-distance between aggressors   -> randomly chosen
+	 * - v: the intra-distance between aggressors   -> randomly chosen
+	 * - n1: number of aggs in the pattern			-> randomly chosen (see cfg->aggr_n)
+	 * - n2: number of aggs in the 'special' pair	-> randomly chosen
+	 * - H: number of ACTs for each agg in special agg pair  -> (INPUT) use percentile of Revisiting RH paper
+	 *      (consider the low, mid, and high percentile of the results obtained by the Revisiting Rowhammer [1] paper)
+	 * 
+	 * --------
+	 * [1] Kim et al.: “Revisiting RowHammer: An Experimental Analysis of Modern DRAM Devices and Mitigation Techniques,” 
+	 *     May 2020, Available: http://arxiv.org/abs/2005.13121.
+	 */
+
+	int i,j;
+	HammerPattern h_patt;
+	SessionConfig *cfg = suite->cfg;
+
+	h_patt.original_length = cfg->aggr_n;
+	h_patt.len = cfg->aggr_n;
+
+	/* hackish way to do malloc/memset for special aggs too */
+	h_patt.len += n2;
+	fprintf(stderr, "[INFO] h_patt.len = %lu\n", h_patt.len);
+	
+	h_patt.rounds = cfg->h_rounds;
+
+	h_patt.d_lst = (DRAMAddr *) malloc(sizeof(DRAMAddr) * h_patt.len);
+	memset(h_patt.d_lst, 0x00, sizeof(DRAMAddr) * h_patt.len);
+
+	init_chunk(suite);
+	int offset = random_int(1, 32);
+
+	/* hackish way to not define addresses for special aggs */
+	h_patt.len -= n2;
+
+	h_patt.d_lst[0] = suite->d_base;
+	h_patt.d_lst[0].row = suite->d_base.row + offset;
+
+	h_patt.d_lst[1] = suite->d_base;
+	h_patt.d_lst[1].row = h_patt.d_lst[0].row + v + 1;
+	for (i = 2; i < h_patt.len-1; i+=2) {
+		h_patt.d_lst[i] = suite->d_base;
+		h_patt.d_lst[i].row = h_patt.d_lst[i-1].row + d + 1;
+		h_patt.d_lst[i+1] = suite->d_base;
+		h_patt.d_lst[i+1].row = h_patt.d_lst[i].row + v + 1;
+	}
+	if (h_patt.len % 2) {
+		h_patt.d_lst[h_patt.len-1] = suite->d_base;
+		h_patt.d_lst[h_patt.len-1].row = h_patt.d_lst[h_patt.len-2].row + d + 1;
+	}
+	
+	/* now define addresses for special aggressors that are placed at the pattern's end */
+	h_patt.d_lst[h_patt.len] = suite->d_base;
+	h_patt.d_lst[h_patt.len].row = suite->d_base.row + random_int(1, 128);
+	for (j = h_patt.len+1; j < h_patt.len + n2; ++j) {
+		h_patt.d_lst[j] = suite->d_base;
+		h_patt.d_lst[j].row = h_patt.d_lst[j-1].row + d + 1;
+	}
+
+	/* now restore the real h_patt.len */
+	h_patt.len += n2;
+
+	// randomly decide whether we flush immediately after accessing a row
+	bool flush_early = (bool)random_int(0,1+1);
+	fprintf(stderr, "[INFO] flush_early = %s\n", (flush_early ? "true" : "false"));
+
+	fprintf(stderr, "[HAMMER] - %s: ", hPatt_2_str(&h_patt, ROW_FIELD));
+	for (int bk = 0; bk < get_banks_cnt(); bk++)
+	{
+		for (int idx = 0; idx < h_patt.len; idx++) {
+			h_patt.d_lst[idx].bank = bk;
+		}
+#ifdef FLIPTABLE
+		print_start_attack(&h_patt);
+#endif
+		for (int idx = 0; idx < h_patt.len; idx++)
+			fill_row(suite, &h_patt.d_lst[idx], suite->cfg->d_cfg, 0);
+
+		/* use special function for hammering with special acesses in between */
+		uint64_t time = hammer_it_random(&h_patt, suite->mem, hammer_count, flush_early);
+		fprintf(stderr, "%lu ",time);
+
+		scan_rows(suite, &h_patt, 0);
+		for (int idx = 0; idx<h_patt.len; idx++) {
+			fill_row(suite, &h_patt.d_lst[idx], suite->cfg->d_cfg, 1);
+		}
+
+#ifdef FLIPTABLE
+		print_end_attack();
+#endif
+	}
+	fprintf(stderr, "\n");
+	free(h_patt.d_lst);
+}
+
 void fuzz(HammerSuite *suite, int d, int v)
 {
 	int i;
@@ -914,9 +1098,9 @@ void create_dir(const char* dir_name)
 	}
 }
 
-void fuzzing_session(SessionConfig * cfg, MemoryBuffer * mem)
+void fuzzing_session(SessionConfig * cfg, MemoryBuffer * mem, bool random_fuzzing, int hammer_count)
 {
-	int d, v, aggrs;
+	int d, v, aggrs, n2;
 
 	srand(CL_SEED);
 	DRAMAddr d_base = phys_2_dram(virt_2_phys(mem->buffer, mem));
@@ -964,7 +1148,22 @@ void fuzzing_session(SessionConfig * cfg, MemoryBuffer * mem)
 		cfg->aggr_n = random_int(2, 32);
 		d = random_int(0, 16);
 		v = random_int(1, 4);
-		fuzz(suite, d, v);
+		fprintf(stderr, "[INFO] cfg->aggr_n = %d\n", cfg->aggr_n);
+		fprintf(stderr, "[INFO] d = %d\n", d);
+		fprintf(stderr, "[INFO] v = %d\n", v);
+		if (random_fuzzing) {
+			n2 = random_int(2, 32);
+			fprintf(stderr, "[INFO] n2 = %d\n", n2);
+			/* lower/mid/upper percentile of HammerCount values based on Revisiting RowHammer paper */
+			int hc_value = hammer_count;
+			if (hammer_count == -1) {
+				hc_value = random_int(10000,147500+1);
+				fprintf(stderr, "[INFO] hc_value = %d\n", hc_value);
+			}
+			fuzz_random(suite, d, v, n2, hc_value);
+		} else {
+			fuzz(suite, d, v);
+		}
 	}
 }
 
