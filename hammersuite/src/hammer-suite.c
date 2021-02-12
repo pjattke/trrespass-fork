@@ -20,6 +20,7 @@
 #include <sched.h>
 #include <limits.h>
 #include <math.h>
+#include <inttypes.h>
 
 #define REFRESH_VAL "stdrefi"
 #define OUT_HEAD "f_og, f_new, vict_addr, aggr_addr\n"
@@ -255,10 +256,35 @@ uint64_t hammer_it(HammerPattern* patt, MemoryBuffer* mem) {
 uint64_t hammer_it_random(HammerPattern* patt, MemoryBuffer* mem, int special_aggs_target_hc, bool flush_early) {
 	size_t idx;
 	uint64_t special_aggs_cnt = 0;
-	
+
 	// the probability that we will add special aggressor accesses
 	int probability = (int)ceil(((float)patt->rounds/(float)special_aggs_target_hc));
 
+	// to minimize ops that we do in each round, we precompute a char array of 1M bits (= patt->rounds) where bits are set
+	// according to the probability we need to achieve the given hammering count (special_aggs_target_hc). then during
+	// the loop we just need to check whether the respective bit is set. we use a bit mask (x = 128) which is cyclically
+	// rotated after each loop iteration to mask the current bit (as each char has 1 byte).
+	size_t bytes = patt->rounds/(8*sizeof(char));
+	unsigned char bitseq[bytes];
+	for (size_t i = 0; i < bytes; ++i) {
+		for (size_t j = 0; j < 8; ++j) {
+			bitseq[i] |= ((random_int(0, patt->rounds) % probability == 0) ? 1 : 0) << j;
+		}
+		// printf("%lu: %d\n", i, bitseq[i]);
+	}
+	unsigned char x = 128; // = 0b10000000
+	// for (size_t i = 0; i < 20*8; ++i) {
+		// printf("%d: ", i);
+		// for (int j = 7; j >= 0; --j) {
+		//   printf("%u", (((x >> j) & 1)) ? 1 : 0);
+		// }
+		// printf("\n");
+		// if (i > 0 && i % 8 == 0) printf("\n");
+		// printf("%u", (((bitseq[(i/8)]) & x) > 0)? 1 : 0);
+		// printf("|%zu: %u\n", i, ((*bitseq >> i) & 1));
+		// x = (x >> 1) | (x << (sizeof(x)*8 - 1));
+	// }
+	
 	char** v_lst = (char**) malloc(sizeof(char*)*patt->len);
 	for (size_t i = 0; i < patt->len; i++) {
 		v_lst[i] = phys_2_virt(dram_2_phys(patt->d_lst[i]), mem);
@@ -278,51 +304,81 @@ uint64_t hammer_it_random(HammerPattern* patt, MemoryBuffer* mem, int special_ag
 
 	uint64_t cl0, cl1;
 	cl0 = realtime_now();
-	for ( int i = 0; i < patt->rounds;  i++) {
-		mfence();
-		if (special_aggs_cnt < special_aggs_target_hc && (random_int(0,patt->rounds) % probability) == 0) {
-			special_aggs_cnt++;
-			// define where (i.e., before which access) to interrupt the pattern; we then replace the following accesses
-			// by accesses to the special aggressors
-			idx = random_int(0, patt->original_length);
 
-			/* hammering */
-			// do accesses up to index idx
-			size_t j;
-			for (j = 0; j < idx; j++) {
-				*(volatile char*) v_lst[j];
-				if (flush_early) clflushopt(v_lst[j]);
-			}
-			// do accesses to special aggressors
-			for (size_t k = patt->original_length; k < patt->len; k++) {
-				*(volatile char*) v_lst[k];
-				if (flush_early) clflushopt(v_lst[k]);
-				j++;
-			}
-			// do accesses from index idx+(num_special_aggs) up to end of pattern
-			for (; j < patt->original_length; j++) {
-				*(volatile char*) v_lst[j];
-				if (flush_early) clflushopt(v_lst[j]);
-			}
-
-			/* flushing */
-			if (!flush_early) {
-				for (size_t j = 0; j < patt->len; j++) {
+	if (flush_early) {
+		for ( int i = 0; i < patt->rounds;  i++) {
+			mfence();
+			if (special_aggs_cnt < special_aggs_target_hc && (bitseq[(i/8)] & x) > 0) {
+				special_aggs_cnt++;
+				// define where (i.e., before which access) to interrupt the pattern; we then replace the following accesses
+				// by accesses to the special aggressors
+				idx = random_int(0, patt->original_length);
+				/* hammering */
+				// do accesses up to index idx
+				size_t j;
+				for (j = 0; j < idx; j++) {
+					*(volatile char*) v_lst[j];
+					clflushopt(v_lst[j]);
+				}
+				// do accesses to special aggressors
+				for (size_t k = patt->original_length; k < patt->len; k++) {
+					*(volatile char*) v_lst[k];
+					clflushopt(v_lst[k]);
+					j++;
+				}
+				// do accesses from index idx+(num_special_aggs) up to end of pattern
+				for (; j < patt->original_length; j++) {
+					*(volatile char*) v_lst[j];
+					clflushopt(v_lst[j]);
+				}
+			} else {
+				for (size_t j = 0; j < patt->original_length; j++) {
+					*(volatile char*) v_lst[j];
 					clflushopt(v_lst[j]);
 				}
 			}
-		} else {
-			for (size_t j = 0; j < patt->original_length; j++) {
-				*(volatile char*) v_lst[j];
-				if (flush_early) clflushopt(v_lst[j]);
-			}
-			if (!flush_early) {
+			x = (x >> 1) | (x << (sizeof(x)*8 - 1));
+		}
+	} else {
+		for ( int i = 0; i < patt->rounds;  i++) {
+			mfence();
+			if (special_aggs_cnt < special_aggs_target_hc && (bitseq[(i/8)] & x) > 0) {
+				special_aggs_cnt++;
+				// define where (i.e., before which access) to interrupt the pattern; we then replace the following accesses
+				// by accesses to the special aggressors
+				idx = random_int(0, patt->original_length);
+
+				/* hammering */
+				// do accesses up to index idx
+				size_t j;
+				for (j = 0; j < idx; j++) {
+					*(volatile char*) v_lst[j];
+				}
+				// do accesses to special aggressors
+				for (size_t k = patt->original_length; k < patt->len; k++) {
+					*(volatile char*) v_lst[k];
+					j++;
+				}
+				// do accesses from index idx+(num_special_aggs) up to end of pattern
+				for (; j < patt->original_length; j++) {
+					*(volatile char*) v_lst[j];
+				}
+				/* flushing */
+				for (size_t j = 0; j < patt->len; j++) {
+					clflushopt(v_lst[j]);
+				}
+			} else {
+				for (size_t j = 0; j < patt->original_length; j++) {
+					*(volatile char*) v_lst[j];
+				}
 				for (size_t j = 0; j < patt->original_length; j++) {
 					clflushopt(v_lst[j]);
 				}
 			}
+			x = (x >> 1) | (x << (sizeof(x)*8 - 1));
 		}
 	}
+
 	cl1 = realtime_now();
 	free(v_lst);
 	return (cl1-cl0) / 1000000;
@@ -988,19 +1044,20 @@ void fuzz_random(HammerSuite *suite, int d, int v, int n2, int hammer_count)
 	}
 	
 	/* now define addresses for special aggressors that are placed at the pattern's end */
-	h_patt.d_lst[h_patt.len] = suite->d_base;
-	h_patt.d_lst[h_patt.len].row = h_patt.d_lst[h_patt.len-1].row + random_int(1, 64);
-	for (j = h_patt.len+1; j < h_patt.len + n2; ++j) {
-		h_patt.d_lst[j] = suite->d_base;
-		h_patt.d_lst[j].row = h_patt.d_lst[j-1].row + d + 1;
+	if (n2 > 0) {
+		h_patt.d_lst[h_patt.len] = suite->d_base;
+		h_patt.d_lst[h_patt.len].row = h_patt.d_lst[h_patt.len-1].row + random_int(1, 64);
+		for (j = h_patt.len+1; j < h_patt.len + n2; ++j) {
+			h_patt.d_lst[j] = suite->d_base;
+			h_patt.d_lst[j].row = h_patt.d_lst[j-1].row + d + 1;
+		}
 	}
 
 	/* now restore the real h_patt.len */
 	h_patt.len += n2;
 
 	// randomly decide whether we flush immediately after accessing a row
-	// bool flush_early = (bool)random_int(0,1+1);
-	bool flush_early = false;
+	bool flush_early = (bool)random_int(0,1+1);
 	fprintf(stderr, "[INFO] flush_early = %s\n", (flush_early ? "true" : "false"));
 
 	fprintf(stderr, "[HAMMER] - %s: ", hPatt_2_str(&h_patt, ROW_FIELD));
@@ -1152,11 +1209,11 @@ void fuzzing_session(SessionConfig * cfg, MemoryBuffer * mem, bool random_fuzzin
 		fprintf(stderr, "[INFO] d = %d\n", d);
 		fprintf(stderr, "[INFO] v = %d\n", v);
 		if (random_fuzzing) {
-			n2 = random_int(2, 32);
+			n2 = 2; // we always use a double-sided pair
 			fprintf(stderr, "[INFO] n2 = %d\n", n2);
-			/* lower/mid/upper percentile of HammerCount values based on Revisiting RowHammer paper */
 			int hc_value = hammer_count;
 			if (hammer_count == -1) {
+				/* range based on Revisiting RowHammer paper */
 				hc_value = random_int(10000,147500+1);
 				fprintf(stderr, "[INFO] hc_value = %d\n", hc_value);
 			}
