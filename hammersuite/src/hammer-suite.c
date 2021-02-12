@@ -989,7 +989,7 @@ void fuzz_random(HammerSuite *suite, int d, int v, int n2, int hammer_count)
 	
 	/* now define addresses for special aggressors that are placed at the pattern's end */
 	h_patt.d_lst[h_patt.len] = suite->d_base;
-	h_patt.d_lst[h_patt.len].row = suite->d_base.row + random_int(1, 128);
+	h_patt.d_lst[h_patt.len].row = h_patt.d_lst[h_patt.len-1].row + random_int(1, 64);
 	for (j = h_patt.len+1; j < h_patt.len + n2; ++j) {
 		h_patt.d_lst[j] = suite->d_base;
 		h_patt.d_lst[j].row = h_patt.d_lst[j-1].row + d + 1;
