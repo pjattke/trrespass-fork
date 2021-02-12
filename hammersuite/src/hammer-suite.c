@@ -282,8 +282,8 @@ uint64_t hammer_it_random(HammerPattern* patt, MemoryBuffer* mem, int special_ag
 		mfence();
 		if (special_aggs_cnt < special_aggs_target_hc && (random_int(0,patt->rounds) % probability) == 0) {
 			special_aggs_cnt++;
-			// define where (i.e., before which access) to interrupt the pattern; we then replace these accesses
-			// by the accesses to the special aggressors
+			// define where (i.e., before which access) to interrupt the pattern; we then replace the following accesses
+			// by accesses to the special aggressors
 			idx = random_int(0, patt->original_length);
 
 			/* hammering */
@@ -325,7 +325,6 @@ uint64_t hammer_it_random(HammerPattern* patt, MemoryBuffer* mem, int special_ag
 	}
 	cl1 = realtime_now();
 	free(v_lst);
-
 	return (cl1-cl0) / 1000000;
 }
 
@@ -1000,7 +999,8 @@ void fuzz_random(HammerSuite *suite, int d, int v, int n2, int hammer_count)
 	h_patt.len += n2;
 
 	// randomly decide whether we flush immediately after accessing a row
-	bool flush_early = (bool)random_int(0,1+1);
+	// bool flush_early = (bool)random_int(0,1+1);
+	bool flush_early = false;
 	fprintf(stderr, "[INFO] flush_early = %s\n", (flush_early ? "true" : "false"));
 
 	fprintf(stderr, "[HAMMER] - %s: ", hPatt_2_str(&h_patt, ROW_FIELD));
