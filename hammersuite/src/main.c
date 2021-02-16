@@ -114,7 +114,7 @@ int main(int argc, char **argv)
 			char delim[] = ",";
 			char *ptr = strtok(p->special_aggs_rows, delim);
 			for (size_t i = 0; i < num_special_agg_rows && ptr != NULL; ++i) {
-				printf("'%s'\n", ptr);
+				// printf("'%s'\n", ptr);
 				srows[i] = strtol(ptr, NULL, 10);
 				ptr = strtok(NULL, delim);
 			}
