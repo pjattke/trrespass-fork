@@ -108,7 +108,18 @@ int main(int argc, char **argv)
 	if (p->fuzzing) {
 		fuzzing_session(&s_cfg, &mem, p->random, p->hammer_count);
 	} else if (p->inter_dist != -1 && p->intra_dist != -1) {
-		benchmark_best_pattern(&s_cfg, &mem, p->intra_dist, p->inter_dist, p->bank);
+		size_t num_special_agg_rows = strlen(p->special_aggs_rows);
+		long srows[num_special_agg_rows];
+		if (num_special_agg_rows > 0) {
+			char delim[] = ",";
+			char *ptr = strtok(p->special_aggs_rows, delim);
+			for (size_t i = 0; i < num_special_agg_rows && ptr != NULL; ++i) {
+				printf("'%s'\n", ptr);
+				srows[i] = strtol(ptr, NULL, 10);
+				ptr = strtok(NULL, delim);
+			}
+		}
+		benchmark_best_pattern(&s_cfg, &mem, p->inter_dist, p->intra_dist, p->bank, srows);
 	} else {
 		hammer_session(&s_cfg, &mem);
 	}

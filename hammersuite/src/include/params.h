@@ -40,6 +40,7 @@ typedef struct ProfileParams {
 	int      intra_dist     = -1;
 	int      bank     		= -1;
 	int      hammer_count   = -1;
+	char 	*special_aggs_rows;
 } ProfileParams;
 
 int process_argv(int argc, char *argv[], ProfileParams *params);

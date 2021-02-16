@@ -143,7 +143,11 @@ char *hPatt_2_str(HammerPattern * h_patt, int fields)
 		dAddr_str = dAddr_2_str(h_patt->d_lst[i], fields);
 		strcat(patt_str, dAddr_str);
 		if (i + 1 != len) {
-			strcat(patt_str, "/");
+			if (h_patt->original_length != 0 && i > h_patt->original_length) {
+				strcat(patt_str, "|");
+			} else {
+				strcat(patt_str, "/");
+			}
 		}
 
 	}
@@ -805,7 +809,7 @@ int assisted_double_sided_test(HammerSuite * suite)
 	free(h_patt.d_lst);
 }
 
-void benchmark_best_pattern(SessionConfig *cfg, MemoryBuffer *mem, int d, int v, int bank_no)
+void benchmark_best_pattern(SessionConfig *cfg, MemoryBuffer *mem, int d, int v, int bank_no, long special_rows[])
 {
 	srand(CL_SEED);
 
@@ -887,14 +891,26 @@ void benchmark_best_pattern(SessionConfig *cfg, MemoryBuffer *mem, int d, int v,
 		h_patt.d_lst[h_patt.len - 1].row = h_patt.d_lst[h_patt.len - 2].row + d + 1;
 	}
 
+	// add 'special_rows' to pattern by overwriting the last entries by given rows (on same bank)
+	size_t n = sizeof(special_rows)/sizeof(long);
+	if (n > 0) {
+		const size_t base_idx = h_patt.len-1-n;
+		// fprintf(stderr, "base_idx: %lu\n", base_idx);
+		// fprintf(stderr, "h_patt.len: %lu\n", h_patt.len);
+		// fprintf(stderr, "n: %lu\n", n);
+		for (size_t i = 0; i <= n; ++i) {
+			// fprintf(stderr, "base_idx+i: %lu\n", base_idx+i);
+			h_patt.d_lst[base_idx + i] = suite->d_base;
+			h_patt.d_lst[base_idx + i].bank = suite->d_base.bank;
+			h_patt.d_lst[base_idx + i].row = (uint64_t)special_rows[i];
+			// printf("idx.row : %lu.%llu\n", base_idx + i, h_patt.d_lst[base_idx + i].row);
+		}
+		h_patt.original_length = h_patt.len-n;
+	}
+
 	for (int row_offt = 0; row_offt < n_rows; row_offt++)
 	{
 		init_chunk(suite);
-
-		for (i = 0; i < h_patt.len; i += 1)
-		{
-			h_patt.d_lst[i].row += 1;
-		}
 
 		fprintf(stderr, "[HAMMER] - %s: ", hPatt_2_str(&h_patt, ROW_FIELD));
 
@@ -904,7 +920,11 @@ void benchmark_best_pattern(SessionConfig *cfg, MemoryBuffer *mem, int d, int v,
 		for (int idx = 0; idx < h_patt.len; idx++)
 			fill_row(suite, &h_patt.d_lst[idx], suite->cfg->d_cfg, 0);
 
-		uint64_t time = hammer_it(&h_patt, suite->mem);
+		bool flush_early = false;
+		// bool flush_early = (bool)random_int(0,1+1);
+		// fprintf(stderr, "[INFO] flush_early = %s\n", (flush_early ? "true" : "false"));
+		int hc_value = random_int(10000,147500+1);
+		uint64_t time = hammer_it_random(&h_patt, suite->mem, hc_value, flush_early);
 		fprintf(stderr, "%lu ", time);
 
 		scan_rows(suite, &h_patt, 0);
@@ -918,6 +938,11 @@ void benchmark_best_pattern(SessionConfig *cfg, MemoryBuffer *mem, int d, int v,
 #endif
 
 		fprintf(stderr, "\n");
+
+		for (i = 0; i < h_patt.len; i += 1)
+		{
+			h_patt.d_lst[i].row += 1;
+		}
 	}
 		free(h_patt.d_lst);
 }
@@ -1049,16 +1074,18 @@ void fuzz_random(HammerSuite *suite, int d, int v, int n2, int hammer_count)
 		h_patt.d_lst[h_patt.len].row = h_patt.d_lst[h_patt.len-1].row + random_int(1, 64);
 		for (j = h_patt.len+1; j < h_patt.len + n2; ++j) {
 			h_patt.d_lst[j] = suite->d_base;
-			h_patt.d_lst[j].row = h_patt.d_lst[j-1].row + d + 1;
+			h_patt.d_lst[j].row = h_patt.d_lst[j-1].row + v + 1;
 		}
 	}
 
 	/* now restore the real h_patt.len */
 	h_patt.len += n2;
 
+	// flush_early = false: there's no easy way to pass this information to the sweeping run that's why we ignore it
 	// randomly decide whether we flush immediately after accessing a row
-	bool flush_early = (bool)random_int(0,1+1);
-	fprintf(stderr, "[INFO] flush_early = %s\n", (flush_early ? "true" : "false"));
+	bool flush_early = false;
+	// bool flush_early = (bool)random_int(0,1+1);
+	// fprintf(stderr, "[INFO] flush_early = %s\n", (flush_early ? "true" : "false"));
 
 	fprintf(stderr, "[HAMMER] - %s: ", hPatt_2_str(&h_patt, ROW_FIELD));
 	for (int bk = 0; bk < get_banks_cnt(); bk++)
@@ -1215,8 +1242,8 @@ void fuzzing_session(SessionConfig * cfg, MemoryBuffer * mem, bool random_fuzzin
 			if (hammer_count == -1) {
 				/* range based on Revisiting RowHammer paper */
 				hc_value = random_int(10000,147500+1);
-				fprintf(stderr, "[INFO] hc_value = %d\n", hc_value);
 			}
+			fprintf(stderr, "[INFO] hc_value = %d\n", hc_value);
 			fuzz_random(suite, d, v, n2, hc_value);
 		} else {
 			fuzz(suite, d, v);

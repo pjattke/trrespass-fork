@@ -57,6 +57,7 @@ void print_usage(char *bin_name)
 	fprintf(stderr, "\t-y\t\t= number of rows in between of aggressor pairs\n");
 	fprintf(stderr, "\t-b\t\t= the bank to be used for hammering\n");
 	fprintf(stderr, "\t-z\t\t= use random mode for fuzzing\n");
+	fprintf(stderr, "\t-s\t\t= csv-string of rows for special aggressors in randomized accesses run\n");
 }
 
 static int str2pat(const char *str, char **pat)
@@ -111,7 +112,7 @@ int process_argv(int argc, char *argv[], ProfileParams *p)
 	p->inter_dist = -1;
 	p->bank = -1;
 	p->hammer_count = -1;
-
+	p->special_aggs_rows = (char *)"";
 
 	const struct option long_options[] = {
 		/* These options set a flag. */
@@ -141,7 +142,7 @@ int process_argv(int argc, char *argv[], ProfileParams *p)
 	while (1) {
 		int this_option_optind = optind ? optind : 1;
 		int option_index = 0;
-		int arg = getopt_long(argc, argv, "o:d:r:hvV:T:a:ft:x:y:b:zc:",
+		int arg = getopt_long(argc, argv, "o:d:r:hvV:T:a:ft:x:y:b:zc:s:",
 				      long_options, &option_index);
 
 		if (arg == -1)
@@ -226,7 +227,11 @@ int process_argv(int argc, char *argv[], ProfileParams *p)
 			break;
 		case 'c':
 			p->hammer_count = atoi(optarg);
-			break;			
+			break;	
+		case 's':
+			p->special_aggs_rows = (char *)malloc(sizeof(char) * strlen(optarg));
+			strncpy(p->special_aggs_rows, optarg, strlen(optarg));
+			break;
 		case 'h':
 		default:
 			print_usage(argv[0]);
