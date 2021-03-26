@@ -106,7 +106,7 @@ int main(int argc, char **argv)
 	}
 
 	if (p->fuzzing) {
-		fuzzing_session(&s_cfg, &mem, p->random, p->hammer_count);
+		fuzzing_session(&s_cfg, &mem, p->random, p->hammer_count, p->random_pattern);
 	} else if (p->inter_dist != -1 && p->intra_dist != -1) {
 		size_t num_special_agg_rows = strlen(p->special_aggs_rows);
 		long srows[num_special_agg_rows];

@@ -79,6 +79,8 @@ typedef struct {
 	size_t len;
 	size_t original_length;
 	size_t rounds;
+	size_t lowest_row_no;
+	size_t highest_row_no;
 } HammerPattern;
 
 typedef struct {
@@ -325,7 +327,7 @@ uint64_t hammer_it_random(HammerPattern* patt, MemoryBuffer* mem, int special_ag
 			}
 			// do accesses to special aggressors
 			for (size_t k = patt->original_length; 
-					(special_aggs_cnt < special_aggs_target_hc && (bitseq[(i/8)] & x) && k < patt->len; 
+					(special_aggs_cnt < special_aggs_target_hc && (bitseq[(i/8)] & x) && k < patt->len); 
 					k++) {
 				*(volatile char*) v_lst[k];
 				clflushopt(v_lst[k]);
@@ -349,7 +351,7 @@ uint64_t hammer_it_random(HammerPattern* patt, MemoryBuffer* mem, int special_ag
 			}
 			// do accesses to special aggressors
 			for (size_t k = patt->original_length; 
-					(special_aggs_cnt < special_aggs_target_hc && (bitseq[(i/8)] & x) && k < patt->len; 
+					(special_aggs_cnt < special_aggs_target_hc && (bitseq[(i/8)] & x) && k < patt->len); 
 					k++) {
 				*(volatile char*) v_lst[k];
 				j++;
@@ -530,8 +532,8 @@ void scan_random(HammerSuite * suite, HammerPattern * h_patt, size_t adj_rows)
 
 	d_tmp.bank = h_patt->d_lst[0].bank;
 
-	for (size_t row = 0; row < cfg->h_rows; row++) {
-		d_tmp.row = suite->mapper->base_row + row;
+	for (size_t row = h_patt->lowest_row_no; row < h_patt->highest_row_no; row++) {
+		d_tmp.row = row;
 		for (size_t col = 0; col < ROW_SIZE; col += (1 << 6)) {
 			d_tmp.col = col;
 			DRAM_pte pte = get_dram_pte(mapper, &d_tmp);
@@ -875,7 +877,7 @@ void benchmark_best_pattern(SessionConfig *cfg, MemoryBuffer *mem, int d, int v,
 	}
 
 	// add 'special_rows' to pattern by overwriting the last entries by given rows (on same bank)
-	size_t n = sizeof(special_rows)/sizeof(long);
+	size_t n = sizeof(special_rows)/sizeof(special_rows[0]);
 	if (n > 0) {
 		const size_t base_idx = h_patt.len-1-n;
 		// fprintf(stderr, "base_idx: %lu\n", base_idx);
@@ -903,7 +905,7 @@ void benchmark_best_pattern(SessionConfig *cfg, MemoryBuffer *mem, int d, int v,
 		for (int idx = 0; idx < h_patt.len; idx++)
 			fill_row(suite, &h_patt.d_lst[idx], suite->cfg->d_cfg, 0);
 
-		bool flush_early = true;
+		bool flush_early = false;
 		// bool flush_early = (bool)random_int(0,1+1);
 		// fprintf(stderr, "[INFO] flush_early = %s\n", (flush_early ? "true" : "false"));
 		int hc_value = random_int(10000,147500+1);
@@ -993,7 +995,7 @@ int n_sided_test(HammerSuite * suite)
 	free(h_patt.d_lst);
 }
 
-void fuzz_random(HammerSuite *suite, int d, int v, int n2, int hammer_count)
+void fuzz_random(HammerSuite *suite, int d, int v, int n2, int hammer_count, bool random_pattern)
 {
 	/* 
 	 * The idea of this method is that we take the original TRRespass-generated pattern and inject at random times 
@@ -1035,39 +1037,55 @@ void fuzz_random(HammerSuite *suite, int d, int v, int n2, int hammer_count)
 	/* hackish way to not define addresses for special aggs */
 	h_patt.len -= n2;
 
-	// TODO check program arg full_random (to add!) here whether the underlying pattern should not be n-sided but purely
-	// random instead
-
-	h_patt.d_lst[0] = suite->d_base;
-	h_patt.d_lst[0].row = suite->d_base.row + offset;
-
-	h_patt.d_lst[1] = suite->d_base;
-	h_patt.d_lst[1].row = h_patt.d_lst[0].row + v + 1;
-	for (i = 2; i < h_patt.len-1; i+=2) {
-		h_patt.d_lst[i] = suite->d_base;
-		h_patt.d_lst[i].row = h_patt.d_lst[i-1].row + d + 1;
-		h_patt.d_lst[i+1] = suite->d_base;
-		h_patt.d_lst[i+1].row = h_patt.d_lst[i].row + v + 1;
+	fprintf(stderr, "random_pattern = %s\n", (random_pattern) ? "true" : "false");
+	if (random_pattern) {
+		for (size_t k = 0; k < h_patt.len; ++k) {
+			h_patt.d_lst[k] = suite->d_base;	
+			h_patt.d_lst[k].row = suite->d_base.row + rand()%512;
+		}
+	} else {
+		h_patt.d_lst[0] = suite->d_base;
+		h_patt.d_lst[0].row = suite->d_base.row + offset;
+		h_patt.d_lst[1] = suite->d_base;
+		h_patt.d_lst[1].row = h_patt.d_lst[0].row + v + 1;
+		for (i = 2; i < h_patt.len-1; i+=2) {
+			h_patt.d_lst[i] = suite->d_base;
+			h_patt.d_lst[i].row = h_patt.d_lst[i-1].row + d + 1;
+			h_patt.d_lst[i+1] = suite->d_base;
+			h_patt.d_lst[i+1].row = h_patt.d_lst[i].row + v + 1;
+		}
+		if (h_patt.len % 2) {
+			h_patt.d_lst[h_patt.len-1] = suite->d_base;
+			h_patt.d_lst[h_patt.len-1].row = h_patt.d_lst[h_patt.len-2].row + d + 1;
+		}
 	}
-	if (h_patt.len % 2) {
-		h_patt.d_lst[h_patt.len-1] = suite->d_base;
-		h_patt.d_lst[h_patt.len-1].row = h_patt.d_lst[h_patt.len-2].row + d + 1;
-	}
-	
-	// TODO end
 
-	/* now define addresses for special aggressors that are placed at the pattern's end */
+	/* now define addresses for special aggressors that are placed at the pattern's very end */
 	if (n2 > 0) {
 		h_patt.d_lst[h_patt.len] = suite->d_base;
-		h_patt.d_lst[h_patt.len].row = h_patt.d_lst[h_patt.len-1].row + random_int(1, 64);
-		for (j = h_patt.len+1; j < h_patt.len + n2; ++j) {
+		h_patt.d_lst[h_patt.len].row = h_patt.d_lst[h_patt.len-1].row + random_int(1, 128);
+		// fprintf(stderr, "row of special agg1 = %d\n", h_patt.d_lst[h_patt.len].row);
+		for (j = h_patt.len+1; j < (h_patt.len + n2); ++j) {
 			h_patt.d_lst[j] = suite->d_base;
 			h_patt.d_lst[j].row = h_patt.d_lst[j-1].row + v + 1;
+			// fprintf(stderr, "row of special agg2 = %d\n", h_patt.d_lst[j].row);
 		}
 	}
 
 	/* now restore the real h_patt.len */
 	h_patt.len += n2;
+
+	// determine the lowest/highest row number for later (scanning of rows for bit flips)
+	h_patt.lowest_row_no = SIZE_MAX;
+	h_patt.highest_row_no = 0;
+	for (size_t l = 0; l < h_patt.len; ++l) {
+		h_patt.lowest_row_no = (h_patt.d_lst[l].row < h_patt.lowest_row_no) 
+			? h_patt.d_lst[l].row 
+			: h_patt.lowest_row_no;
+		h_patt.highest_row_no = (h_patt.d_lst[l].row > h_patt.highest_row_no)
+			? h_patt.d_lst[l].row 
+			: h_patt.highest_row_no;
+	}
 
 	// flush_early = false: there's no easy way to pass this information to the sweeping run that's why we ignore it
 	// randomly decide whether we flush immediately after accessing a row
@@ -1170,7 +1188,7 @@ void create_dir(const char* dir_name)
 	}
 }
 
-void fuzzing_session(SessionConfig * cfg, MemoryBuffer * mem, bool random_fuzzing, int hammer_count)
+void fuzzing_session(SessionConfig * cfg, MemoryBuffer * mem, bool random_fuzzing, int hammer_count, bool random_pattern)
 {
 	int d, v, aggrs, n2;
 
@@ -1232,7 +1250,7 @@ void fuzzing_session(SessionConfig * cfg, MemoryBuffer * mem, bool random_fuzzin
 				hc_value = random_int(10000,147500+1);
 			}
 			fprintf(stderr, "[INFO] hc_value = %d\n", hc_value);
-			fuzz_random(suite, d, v, n2, hc_value);
+			fuzz_random(suite, d, v, n2, hc_value, random_pattern);
 		} else {
 			fuzz(suite, d, v);
 		}
