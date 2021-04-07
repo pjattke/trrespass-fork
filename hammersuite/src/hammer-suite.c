@@ -532,8 +532,8 @@ void scan_random(HammerSuite * suite, HammerPattern * h_patt, size_t adj_rows)
 
 	d_tmp.bank = h_patt->d_lst[0].bank;
 
-	for (size_t row = h_patt->lowest_row_no; row < h_patt->highest_row_no; row++) {
-		d_tmp.row = row;
+	for (size_t row = 0; row < cfg->h_rows; row++) {
+		d_tmp.row = suite->mapper->base_row + row;
 		for (size_t col = 0; col < ROW_SIZE; col += (1 << 6)) {
 			d_tmp.col = col;
 			DRAM_pte pte = get_dram_pte(mapper, &d_tmp);
