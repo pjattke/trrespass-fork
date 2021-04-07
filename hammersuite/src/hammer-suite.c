@@ -222,37 +222,70 @@ int random_int(int min, int max)
 	return number;
 }
 
+inline void sync(char* dmy, int threshold) {
+	uint64_t t0 = 0;
+	uint64_t t1 = 0;
+	size_t sync_rounds = 0;
+	
+	// printf("printing measured time for sync:\n");
+	do {
+		t0 = rdtscp();
+		*(volatile char *)dmy;
+		clflushopt(dmy);
+		t1 = rdtscp();
+		// printf("%"PRId64" ", abs((int64_t) t1 - (int64_t) t0));
+		sync_rounds++;
+	} while (abs((int64_t) t1 - (int64_t) t0) < threshold);
+
+	// printf("\n");
+	// printf("sync rounds: %lu\n", sync_rounds);
+}
+
 uint64_t hammer_it(HammerPattern* patt, MemoryBuffer* mem) {
+	// printf("Called hammer_it(...)\n");
+
+	// make sure synchronization is enabled
+	assert(p->threshold > 0);
+
+	// use synchronization with single "dummy" row;
+	// select two addresses, X and Y=X+k where k is more than one cacheline (=64 byte) away
+	DRAMAddr d1 = {
+		.bank = patt->d_lst[0].bank,
+		.row = rand()%128UL,
+		.col = 0
+	};
+	char* dmy = (char*) malloc(sizeof(char*)*1);
+	dmy = phys_2_virt(dram_2_phys(d1), mem);
 
 	char** v_lst = (char**) malloc(sizeof(char*)*patt->len);
 	for (size_t i = 0; i < patt->len; i++) {
 		v_lst[i] = phys_2_virt(dram_2_phys(patt->d_lst[i]), mem);
 	}
 
+	// synchronize with the REF before starting to hammer
 	sched_yield();
-	if (p->threshold > 0) {
-		uint64_t t0 = 0, t1 = 0;
-		// Threshold value depends on your system
-		while (abs((int64_t) t1 - (int64_t) t0) < p->threshold) {
-			t0 = rdtscp();
-			*(volatile char *)v_lst[0];
-			clflushopt(v_lst[0]);
-			t1 = rdtscp();
-		}
-	}
+	sync(dmy, p->threshold);
 
-
+	// execute hammer rounds
 	uint64_t cl0, cl1;
 	cl0 = realtime_now();
 	for ( int i = 0; i < patt->rounds;  i++) {
 		mfence();
+		
+		// hammer
 		for (size_t j = 0; j < patt->len; j++) {
 			*(volatile char*) v_lst[j];
 		}
+
+		// clflush accesses
 		for (size_t j = 0; j < patt->len; j++) {
 			clflushopt(v_lst[j]);
 		}
+
+		// after the current pattern's round -> synchronize again
+		sync(dmy, p->threshold);
 	}
+
 	cl1 = realtime_now();
 
 	free(v_lst);
@@ -567,7 +600,7 @@ int find_flip(HammerSuite * suite, HammerPattern * h_patt, FlipVal *orig)
 	SessionConfig *cfg = suite->cfg;
 
 	DRAMAddr d_tmp;
-	FlipVal flip;;
+	FlipVal flip;
 
 	d_tmp.bank = orig->d_vict.bank;
 	d_tmp.row = orig->d_vict.row;
