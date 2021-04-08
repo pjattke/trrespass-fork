@@ -222,6 +222,87 @@ int random_int(int min, int max)
 	return number;
 }
 
+/// Determine the number of activations per refresh interval.
+int count_acts_per_ref(volatile char *addr1, volatile char *addr2,
+                       int threshold) {
+repeat:
+  size_t num_measurements = 70;
+  size_t skip_first_n = 20;
+
+  int64_t acts[num_measurements];
+  size_t act_idx = 0;
+
+  int64_t before;
+  int64_t after;
+  int64_t count = 0;
+  int64_t count_old = 0;
+
+  *addr1;
+  *addr2;
+
+  while (true) {
+    clflushopt(addr1);
+    clflushopt(addr2);
+    mfence();
+    before = rdtscp();
+    lfence();
+    *addr1;
+    *addr2;
+    after = rdtscp();
+    count++;
+    if ((after - before) > threshold) {
+      if (count_old != 0) {
+        acts[act_idx++] = (count - count_old) * 2;
+        // stop if we collected 50 data points
+        if (act_idx > num_measurements) break;
+      }
+      count_old = count;
+    }
+  }
+
+  // compute the standard deviation to decide which values to include
+  uint64_t sum = 0;
+//   printf("values = ");
+  for (size_t i = 0; i < act_idx; i++) {
+    sum += acts[i];
+    // printf("%lld ", acts[i]);
+  }
+//   printf("\n");
+  int64_t average = sum / act_idx;
+//   printf("average = %" PRIu64 "\n", average);
+
+  uint64_t deviation[act_idx];
+  for (size_t i = 0; i < act_idx; i++) {
+    deviation[i] = (uint64_t)pow((int64_t)acts[i] - average, 2);
+  }
+
+  uint64_t sum_deviations = 0;
+  for (size_t i = 0; i < act_idx; i++) {
+    sum_deviations += deviation[i];
+  }
+
+  int64_t stdev = sqrt(sum_deviations / act_idx);
+//   printf("stdev = %" PRIu64 "\n", stdev);
+  stdev = stdev == 0 ? 1 : stdev;
+
+  // if our measurement result is deviating too much, we just repeat the experiment again to be sure that the determined
+  // value is correct
+  if (stdev > 20) goto repeat;
+
+  // take all values that are in the range [average-stdev,average+stdev], all
+  // others are outliers and we ignore them
+  size_t remaining_vals = 0;
+  count = 0;
+  for (size_t i = 0; i < act_idx; i++) {
+    if (acts[i] > average - stdev && acts[i] < average + stdev) {
+      count += acts[i];
+      remaining_vals++;
+    }
+  }
+
+  return (count / remaining_vals);
+}
+
 inline void sync(char* dmy, int threshold) {
 	uint64_t t0 = 0;
 	uint64_t t1 = 0;
@@ -236,12 +317,9 @@ inline void sync(char* dmy, int threshold) {
 		// printf("%"PRId64" ", abs((int64_t) t1 - (int64_t) t0));
 		sync_rounds++;
 	} while (abs((int64_t) t1 - (int64_t) t0) < threshold);
-
-	// printf("\n");
-	// printf("sync rounds: %lu\n", sync_rounds);
 }
 
-uint64_t hammer_it(HammerPattern* patt, MemoryBuffer* mem) {
+uint64_t hammer_it(HammerPattern* patt, MemoryBuffer* mem, int acts_per_ref) {
 	// printf("Called hammer_it(...)\n");
 
 	// make sure synchronization is enabled
@@ -262,6 +340,9 @@ uint64_t hammer_it(HammerPattern* patt, MemoryBuffer* mem) {
 		v_lst[i] = phys_2_virt(dram_2_phys(patt->d_lst[i]), mem);
 	}
 
+	// how often do we need to repeat the pattern until we need to start syncing?
+	int fac = acts_per_ref/patt->len;
+
 	// synchronize with the REF before starting to hammer
 	sched_yield();
 	sync(dmy, p->threshold);
@@ -269,21 +350,23 @@ uint64_t hammer_it(HammerPattern* patt, MemoryBuffer* mem) {
 	// execute hammer rounds
 	uint64_t cl0, cl1;
 	cl0 = realtime_now();
-	for ( int i = 0; i < patt->rounds;  i++) {
-		mfence();
-		
-		// hammer
-		for (size_t j = 0; j < patt->len; j++) {
-			*(volatile char*) v_lst[j];
-		}
+	for ( int i = 0; i < patt->rounds/fac;  i++) {
 
-		// clflush accesses
-		for (size_t j = 0; j < patt->len; j++) {
-			clflushopt(v_lst[j]);
-		}
+		for ( int m = 0; m < fac;  m++) {
+			mfence();
+			
+			// hammer
+			for (size_t j = 0; j < patt->len; j++) {
+				*(volatile char*) v_lst[j];
+			}
 
-		// after the current pattern's round -> synchronize again
+			// clflush accesses
+			for (size_t j = 0; j < patt->len; j++) {
+				clflushopt(v_lst[j]);
+			}
+		}
 		sync(dmy, p->threshold);
+
 	}
 
 	cl1 = realtime_now();
@@ -754,7 +837,7 @@ int free_triple_sided_test(HammerSuite * suite)
 				for (int idx = 0; idx < 3; idx++) {
 					fill_row(suite, &h_patt.d_lst[idx], cfg->d_cfg, 0);
 				}
-				uint64_t time = hammer_it(&h_patt, mem);
+				uint64_t time = hammer_it(&h_patt, mem, 0);
 				fprintf(stderr, "%ld ", time);
 
 				scan_rows(suite, &h_patt, 0);
@@ -814,7 +897,7 @@ int assisted_double_sided_test(HammerSuite * suite)
 				// fprintf(stderr, "d_addr: %s\n", dram_2_str(&h_patt.d_lst[idx]));
 			}
 			// fprintf(stderr, "d_addr: %s\n", dram_2_str(&h_patt.d_lst[idx]));
-			uint64_t time = hammer_it(&h_patt, mem);
+			uint64_t time = hammer_it(&h_patt, mem, 0);
 			fprintf(stderr, "%ld ", time);
 
 			scan_rows(suite, &h_patt, 0);
@@ -1012,7 +1095,7 @@ int n_sided_test(HammerSuite * suite)
 				fill_row(suite, &h_patt.d_lst[idx], cfg->d_cfg, 0);
 			}
 
-			uint64_t time = hammer_it(&h_patt, mem);
+			uint64_t time = hammer_it(&h_patt, mem, 0);
 			fprintf(stderr, "%ld ", time);
 
 			scan_rows(suite, &h_patt, 0);
@@ -1157,6 +1240,14 @@ void fuzz_random(HammerSuite *suite, int d, int v, int n2, int hammer_count, boo
 
 void fuzz(HammerSuite *suite, int d, int v)
 {
+	DRAMAddr d1 = { .bank = 0, .row = rand()%128UL, .col = 0 };
+	DRAMAddr d2 = { .bank = 0, .row = d1.row + rand()%128UL, .col = 0 };
+	char* dmy1 = (char*) malloc(sizeof(char*)*1);
+	char* dmy2 = (char*) malloc(sizeof(char*)*1);
+	dmy1 = phys_2_virt(dram_2_phys(d1), suite->mem);
+	dmy2 = phys_2_virt(dram_2_phys(d2), suite->mem);
+	int acts_per_tref = count_acts_per_ref(dmy1, dmy2, p->threshold);
+
 	int i;
 	HammerPattern h_patt;
 	SessionConfig *cfg = suite->cfg;
@@ -1197,7 +1288,7 @@ void fuzz(HammerSuite *suite, int d, int v)
 		for (int idx = 0; idx < h_patt.len; idx++)
 			fill_row(suite, &h_patt.d_lst[idx], suite->cfg->d_cfg, 0);
 
-		uint64_t time = hammer_it(&h_patt, suite->mem);
+		uint64_t time = hammer_it(&h_patt, suite->mem, acts_per_tref);
 		fprintf(stderr, "%lu ",time);
 
 		scan_rows(suite, &h_patt, 0);
