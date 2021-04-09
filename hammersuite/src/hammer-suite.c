@@ -327,11 +327,13 @@ uint64_t hammer_it(HammerPattern* patt, MemoryBuffer* mem, int acts_per_ref) {
 
 	// use synchronization with single "dummy" row;
 	// select two addresses, X and Y=X+k where k is more than one cacheline (=64 byte) away
-	DRAMAddr d1 = {
-		.bank = patt->d_lst[0].bank,
-		.row = rand()%128UL,
-		.col = 0
-	};
+	DRAMAddr d1 = patt->d_lst[0];
+	d1.row += rand()%64;
+	//DRAMAddr d1 = {
+	//	.bank = patt->d_lst[0].bank,
+	//	.row = rand()%128UL,
+	//	.col = 0
+	//};
 	char* dmy = (char*) malloc(sizeof(char*)*1);
 	dmy = phys_2_virt(dram_2_phys(d1), mem);
 
@@ -341,8 +343,10 @@ uint64_t hammer_it(HammerPattern* patt, MemoryBuffer* mem, int acts_per_ref) {
 	}
 
 	// how often do we need to repeat the pattern until we need to start syncing?
+	// printf("acts_per_ref = %d\n", acts_per_ref);
+	// printf("patt->len = %zu\n", patt->len);
 	int fac = acts_per_ref/patt->len;
-
+	
 	// synchronize with the REF before starting to hammer
 	sched_yield();
 	sync(dmy, p->threshold);
@@ -1240,13 +1244,17 @@ void fuzz_random(HammerSuite *suite, int d, int v, int n2, int hammer_count, boo
 
 void fuzz(HammerSuite *suite, int d, int v)
 {
-	DRAMAddr d1 = { .bank = 0, .row = rand()%128UL, .col = 0 };
-	DRAMAddr d2 = { .bank = 0, .row = d1.row + rand()%128UL, .col = 0 };
-	char* dmy1 = (char*) malloc(sizeof(char*)*1);
-	char* dmy2 = (char*) malloc(sizeof(char*)*1);
-	dmy1 = phys_2_virt(dram_2_phys(d1), suite->mem);
-	dmy2 = phys_2_virt(dram_2_phys(d2), suite->mem);
+	DRAMAddr d1 = suite->d_base;
+	d1.row += rand()%64;
+	DRAMAddr d2 = {.bank = d1.bank, .row = (d1.row+rand()%64) + 12, .col = 0};
+	volatile char* dmy1 = (volatile char*) malloc(sizeof(char*));
+	volatile char* dmy2 = (volatile char*) malloc(sizeof(char*));
+	dmy1 = (volatile char*)phys_2_virt(dram_2_phys(d1), suite->mem);
+	// printf("dmy1 = %p\n", dmy1);
+	dmy2 = (volatile char*)phys_2_virt(dram_2_phys(d2), suite->mem);
+	// printf("dmy2 = %p\n", dmy2);
 	int acts_per_tref = count_acts_per_ref(dmy1, dmy2, p->threshold);
+	// printf("count_acts_per_ref returned = %d\n", acts_per_tref);
 
 	int i;
 	HammerPattern h_patt;
