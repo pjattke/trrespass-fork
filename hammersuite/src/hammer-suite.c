@@ -410,11 +410,28 @@ uint64_t hammer_it_random(HammerPattern* patt, MemoryBuffer* mem, int special_ag
 		// printf("|%zu: %u\n", i, ((*bitseq >> i) & 1));
 		// x = (x >> 1) | (x << (sizeof(x)*8 - 1));
 	// }
-	
+
 	char** v_lst = (char**) malloc(sizeof(char*)*patt->len);
 	for (size_t i = 0; i < patt->len; i++) {
 		v_lst[i] = phys_2_virt(dram_2_phys(patt->d_lst[i]), mem);
 	}
+
+	// create a new array A and fill it with two randomly selected rows (index 0,1)
+	char** ddaa = (char**) malloc(sizeof(char*)*4);
+	DRAMAddr d = {
+		.bank = patt->d_lst[0].bank,
+		.row = patt->d_lst[0].row + rand()%128,
+		.col = patt->d_lst[0].col,
+	};
+	ddaa[0] = phys_2_virt(dram_2_phys(d), mem);
+	d.bank += rand()%128;
+	ddaa[1] = phys_2_virt(dram_2_phys(d), mem);
+
+	// move the two special aggs between index range [patt->original_length,patt->len) to array A (index 2,3)
+	for (size_t i = patt->original_length; i < patt->len; i++) {
+		ddaa[i] = v_lst[i];
+	}
+	assert(patt->len-patt->original_length);
 
 	sched_yield();
 	if (p->threshold > 0) {
@@ -446,13 +463,15 @@ uint64_t hammer_it_random(HammerPattern* patt, MemoryBuffer* mem, int special_ag
 				clflushopt(v_lst[j]);
 			}
 			// do accesses to special aggressors
-			for (size_t k = patt->original_length; 
-					(special_aggs_cnt < special_aggs_target_hc && (bitseq[(i/8)] & x) && k < patt->len); 
-					k++) {
-				*(volatile char*) v_lst[k];
-				clflushopt(v_lst[k]);
+			for (size_t k = 0; k < (patt->len-patt->original_length); k++) {
+			//	=> A[idx] accesses aggressors at idx (2,3) if bitseq==1, o
+			//	otherwise accesses dummies at idx (0,1)
+				int bitvalue = (bitseq[(i/8)] & x);
+				*(volatile char*) v_lst[2*bitvalue+k];
+				clflushopt(v_lst[2*bitvalue+k]);
 				j++;
 			}
+
 			// do accesses from index idx+(num_special_aggs) up to end of pattern
 			for (; j < patt->original_length; j++) {
 				*(volatile char*) v_lst[j];
