@@ -505,8 +505,6 @@ void scan_random(HammerSuite * suite, HammerPattern * h_patt, size_t adj_rows)
 
 //  fprintf(stderr, "low: %zu, high:%zud\n", h_patt->lowest_row_no, h_patt->highest_row_no);
 
-  bool any_bitflips_found = false;
-
   for (size_t row = h_patt->lowest_row_no; row < h_patt->highest_row_no; row++) {
 		d_tmp.row = row;
 		for (size_t col = 0; col < ROW_SIZE; col += (1 << 6)) {
@@ -529,16 +527,11 @@ void scan_random(HammerSuite * suite, HammerPattern * h_patt, size_t adj_rows)
 					assert(flip.f_og != flip.f_new);
 					export_flip(&flip);
 
-                  any_bitflips_found = true;
-
 				}
 				memcpy((char *)(pte.v_addr), rand_data, CL_SIZE);
 			}
 		}
 	}
-
-  if (any_bitflips_found)
-    exit(0);
 }
 
 int find_flip(HammerSuite * suite, HammerPattern * h_patt, FlipVal *orig)
