@@ -312,7 +312,7 @@ uint64_t hammer_it_random(HammerPattern *patt, MemoryBuffer *mem, int special_ag
     dummy_row2 = fast_rand() % max_rows;
     access_dummy = (int)(fast_rand() % (int)pow(2, threshold));
 
-    row_no = dummy_row * (access_dummy != 0) + (1-(access_dummy != 0)) * agg1_row;
+    row_no = (dummy_row * (access_dummy != 0) + (1-(access_dummy != 0)) * agg1_row) % max_rows;
     row_no2 = (((row_no!=agg1_row)*dummy_row2)+ ((row_no==agg1_row) * agg2_row)) % max_rows;
 
       if (row_no == agg1_row) agg1_cnt++;
