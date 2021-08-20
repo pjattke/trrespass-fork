@@ -259,118 +259,89 @@ uint64_t hammer_it(HammerPattern* patt, MemoryBuffer* mem) {
 	return (cl1-cl0) / 1000000;
 }
 
-uint64_t hammer_it_random(HammerPattern* patt, MemoryBuffer* mem, int special_aggs_target_hc, bool flush_early) {
-	size_t idx;
-	uint64_t special_aggs_cnt = 0;
+static unsigned int g_seed;
 
-	// the probability that we will add special aggressor accesses
-	int probability = (int)ceil(((float)patt->rounds/(float)special_aggs_target_hc));
+// Used to seed the generator.
+void fast_srand(int seed) {
+  g_seed = seed;
+}
 
-	// to minimize ops that we do in each round, we precompute a char array of 1M bits (= patt->rounds) where bits are set
-	// according to the probability we need to achieve the given hammering count (special_aggs_target_hc). then during
-	// the loop we just need to check whether the respective bit is set. we use a bit mask (x = 128) which is cyclically
-	// rotated after each loop iteration to mask the current bit (as each char has 1 byte).
-	size_t bytes = patt->rounds/(8*sizeof(char));
-	unsigned char bitseq[bytes];
-	for (size_t i = 0; i < bytes; ++i) {
-		for (size_t j = 0; j < 8; ++j) {
-			bitseq[i] |= ((random_int(0, patt->rounds) % probability == 0) ? 1 : 0) << j;
-		}
-		// printf("%lu: %d\n", i, bitseq[i]);
-	}
-	unsigned char x = 128; // = 0b10000000
-	// for (size_t i = 0; i < 20*8; ++i) {
-		// printf("%d: ", i);
-		// for (int j = 7; j >= 0; --j) {
-		//   printf("%u", (((x >> j) & 1)) ? 1 : 0);
-		// }
-		// printf("\n");
-		// if (i > 0 && i % 8 == 0) printf("\n");
-		// printf("%u", (((bitseq[(i/8)]) & x) > 0)? 1 : 0);
-		// printf("|%zu: %u\n", i, ((*bitseq >> i) & 1));
-		// x = (x >> 1) | (x << (sizeof(x)*8 - 1));
-	// }
-	
-	char** v_lst = (char**) malloc(sizeof(char*)*patt->len);
-	for (size_t i = 0; i < patt->len; i++) {
-		v_lst[i] = phys_2_virt(dram_2_phys(patt->d_lst[i]), mem);
-	}
+// Compute a pseudorandom integer.
+// Output value in range [0, 32767]
+int fast_rand(void) {
+  g_seed = (214013*g_seed+2531011);
+  return (g_seed>>16)&0x7FFF;
+}
 
-	sched_yield();
-	if (p->threshold > 0) {
-		uint64_t t0 = 0, t1 = 0;
-		// Threshold value depends on your system
-		while (abs((int64_t) t1 - (int64_t) t0) < p->threshold) {
-			t0 = rdtscp();
-			*(volatile char *)v_lst[0];
-			clflushopt(v_lst[0]);
-			t1 = rdtscp();
-		}
-	}
+uint64_t hammer_it_random(HammerPattern *patt, MemoryBuffer *mem, int special_aggs_target_hc, bool flush_early) {
+  fprintf(stderr, "[INFO] - hammer_it_random called\n");
+  patt->rounds = 800000;
 
-	uint64_t cl0, cl1;
-	cl0 = realtime_now();
+  uint64_t cl0, cl1;
+  cl0 = realtime_now();
 
-	// define where (i.e., before which access) to interrupt the pattern; we then replace the following accesses
-	// by accesses to the special aggressors
-	const size_t cutoff_index = random_int(0, patt->original_length);
+  if (flush_early) {
+    fprintf(stderr, "[ERROR] - flush_early not supported!\n");
+    exit(1);
+  }
 
-	if (flush_early) {
-		for ( int i = 0; i < patt->rounds;  i++) {
-			mfence();
-			special_aggs_cnt++;
-			// do accesses up to index idx
-			size_t j;
-			for (j = 0; j < cutoff_index; j++) {
-				*(volatile char*) v_lst[j];
-				clflushopt(v_lst[j]);
-			}
-			// do accesses to special aggressors
-			for (size_t k = patt->original_length; 
-					(special_aggs_cnt < special_aggs_target_hc && (bitseq[(i/8)] & x) && k < patt->len); 
-					k++) {
-				*(volatile char*) v_lst[k];
-				clflushopt(v_lst[k]);
-				j++;
-			}
-			// do accesses from index idx+(num_special_aggs) up to end of pattern
-			for (; j < patt->original_length; j++) {
-				*(volatile char*) v_lst[j];
-				clflushopt(v_lst[j]);
-			}
-			x = (x >> 1) | (x << (sizeof(x)*8 - 1));
-		}
-	} else {
-		for ( int i = 0; i < patt->rounds;  i++) {
-			mfence();
-			special_aggs_cnt++;
-			// do accesses up to index idx
-			size_t j;
-			for (j = 0; j < cutoff_index; j++) {
-				*(volatile char*) v_lst[j];
-			}
-			// do accesses to special aggressors
-			for (size_t k = patt->original_length; 
-					(special_aggs_cnt < special_aggs_target_hc && (bitseq[(i/8)] & x) && k < patt->len); 
-					k++) {
-				*(volatile char*) v_lst[k];
-				j++;
-			}
-			// do accesses from index idx+(num_special_aggs) up to end of pattern
-			for (; j < patt->original_length; j++) {
-				*(volatile char*) v_lst[j];
-			}
-			/* flushing */
-			for (size_t j = 0; j < patt->len; j++) {
-				clflushopt(v_lst[j]);
-			}
-			x = (x >> 1) | (x << (sizeof(x)*8 - 1));
-		}
-	}
+  fast_srand(25451);
 
-	cl1 = realtime_now();
-	free(v_lst);
-	return (cl1-cl0) / 1000000;
+  const int max_rows = 4090;
+  int agg1_row = patt->d_lst[0].row;
+  int agg2_row = patt->d_lst[0].row + 2;
+
+  fprintf(stderr, "[INFO] agg1_row = %d\n", agg1_row);
+  fprintf(stderr, "[INFO] agg2_row = %d\n", agg2_row);
+
+  int dummy_row;
+  int dummy_row2;
+  int access_dummy;
+  int row_no;
+  int row_no2;
+
+  int agg1_cnt = 0;
+
+  const int threshold = (fast_rand() % 5) + 2;
+  fprintf(stderr, "[INFO] - RH threshold: %d\n", threshold);
+
+  for (int i = 0; i < patt->rounds; i += 2) {
+    uint64_t cl0,  cl1;
+    cl0 = realtime_now();
+    dummy_row = fast_rand() % max_rows;
+    dummy_row2 = fast_rand() % max_rows;
+    access_dummy = (int)(fast_rand() % (int)pow(2, threshold));
+
+    row_no = dummy_row * (access_dummy != 0) + (1-(access_dummy != 0)) * agg1_row;
+    row_no2 = (((row_no!=agg1_row)*dummy_row2)+ ((row_no==agg1_row) * agg2_row)) % max_rows;
+
+      if (row_no == agg1_row) agg1_cnt++;
+//      fprintf(stderr, "row_no = %d\n", row_no);
+//      fprintf(stderr, "row_no2 = %d\n", row_no2);
+
+    patt->d_lst[2] = patt->d_lst[0];
+    patt->d_lst[2].bank = patt->d_lst[0].bank;
+    patt->d_lst[2].row = row_no;
+    patt->d_lst[2].col = 0;
+
+    patt->d_lst[3] = patt->d_lst[0];
+    patt->d_lst[3].bank = patt->d_lst[0].bank;
+    patt->d_lst[3].row = row_no2;
+    patt->d_lst[3].col = 0;
+
+    DRAMAddr acc1 = {.bank = patt->d_lst[0].bank, .row = row_no, .col = 0};
+    DRAMAddr acc2 = {.bank = patt->d_lst[0].bank, .row = row_no2, .col = 0};
+
+
+    *((volatile char *) phys_2_virt(dram_2_phys(patt->d_lst[2]), mem));
+    *((volatile char *) phys_2_virt(dram_2_phys(patt->d_lst[3]), mem));
+//
+    clflushopt((volatile void*)phys_2_virt(dram_2_phys(acc1), mem));
+    clflushopt((volatile void*)phys_2_virt(dram_2_phys(acc2), mem));
+  }
+  fprintf(stderr, "[INFO] agg1_cnt = %d\n", agg1_cnt);
+  cl1 = realtime_now();
+  return (cl1 - cl0)/1000000;
 }
 
 
@@ -532,7 +503,9 @@ void scan_random(HammerSuite * suite, HammerPattern * h_patt, size_t adj_rows)
 
 	d_tmp.bank = h_patt->d_lst[0].bank;
 
-	for (size_t row = h_patt->lowest_row_no; row < h_patt->highest_row_no; row++) {
+//  fprintf(stderr, "low: %zu, high:%zud\n", h_patt->lowest_row_no, h_patt->highest_row_no);
+
+  for (size_t row = h_patt->lowest_row_no; row < h_patt->highest_row_no; row++) {
 		d_tmp.row = row;
 		for (size_t col = 0; col < ROW_SIZE; col += (1 << 6)) {
 			d_tmp.col = col;
@@ -1038,54 +1011,56 @@ void fuzz_random(HammerSuite *suite, int d, int v, int n2, int hammer_count, boo
 	h_patt.len -= n2;
 
 	fprintf(stderr, "random_pattern = %s\n", (random_pattern) ? "true" : "false");
-	if (random_pattern) {
-		for (size_t k = 0; k < h_patt.len; ++k) {
-			h_patt.d_lst[k] = suite->d_base;	
-			h_patt.d_lst[k].row = suite->d_base.row + rand()%512;
-		}
-	} else {
-		h_patt.d_lst[0] = suite->d_base;
-		h_patt.d_lst[0].row = suite->d_base.row + offset;
-		h_patt.d_lst[1] = suite->d_base;
-		h_patt.d_lst[1].row = h_patt.d_lst[0].row + v + 1;
-		for (i = 2; i < h_patt.len-1; i+=2) {
-			h_patt.d_lst[i] = suite->d_base;
-			h_patt.d_lst[i].row = h_patt.d_lst[i-1].row + d + 1;
-			h_patt.d_lst[i+1] = suite->d_base;
-			h_patt.d_lst[i+1].row = h_patt.d_lst[i].row + v + 1;
-		}
-		if (h_patt.len % 2) {
-			h_patt.d_lst[h_patt.len-1] = suite->d_base;
-			h_patt.d_lst[h_patt.len-1].row = h_patt.d_lst[h_patt.len-2].row + d + 1;
-		}
-	}
+//	if (random_pattern) {
+//		for (size_t k = 0; k < h_patt.len; ++k) {
+//			h_patt.d_lst[k] = suite->d_base;
+//			h_patt.d_lst[k].row = suite->d_base.row + rand()%512;
+//		}
+//	} else {
+//		h_patt.d_lst[0] = suite->d_base;
+//		h_patt.d_lst[0].row = suite->d_base.row + offset;
+//		h_patt.d_lst[1] = suite->d_base;
+//		h_patt.d_lst[1].row = h_patt.d_lst[0].row + v + 1;
+//		for (i = 2; i < h_patt.len-1; i+=2) {
+//			h_patt.d_lst[i] = suite->d_base;
+//			h_patt.d_lst[i].row = h_patt.d_lst[i-1].row + d + 1;
+//			h_patt.d_lst[i+1] = suite->d_base;
+//			h_patt.d_lst[i+1].row = h_patt.d_lst[i].row + v + 1;
+//		}
+//		if (h_patt.len % 2) {
+//			h_patt.d_lst[h_patt.len-1] = suite->d_base;
+//			h_patt.d_lst[h_patt.len-1].row = h_patt.d_lst[h_patt.len-2].row + d + 1;
+//		}
+//	}
 
 	/* now define addresses for special aggressors that are placed at the pattern's very end */
 	if (n2 > 0) {
-		h_patt.d_lst[h_patt.len] = suite->d_base;
-		h_patt.d_lst[h_patt.len].row = h_patt.d_lst[h_patt.len-1].row + random_int(1, 128);
+		h_patt.d_lst[0] = suite->d_base;
+		h_patt.d_lst[0].row = random_int(1, 8100);
+        h_patt.d_lst[1] = suite->d_base;
+        h_patt.d_lst[1].row = h_patt.d_lst[h_patt.len].row + 2;
 		// fprintf(stderr, "row of special agg1 = %d\n", h_patt.d_lst[h_patt.len].row);
-		for (j = h_patt.len+1; j < (h_patt.len + n2); ++j) {
-			h_patt.d_lst[j] = suite->d_base;
-			h_patt.d_lst[j].row = h_patt.d_lst[j-1].row + v + 1;
-			// fprintf(stderr, "row of special agg2 = %d\n", h_patt.d_lst[j].row);
-		}
+//		for (j = h_patt.len+1; j < (h_patt.len + n2); ++j) {
+//			h_patt.d_lst[j] = suite->d_base;
+//			h_patt.d_lst[j].row = h_patt.d_lst[j-1].row + v + 1;
+//			// fprintf(stderr, "row of special agg2 = %d\n", h_patt.d_lst[j].row);
+//		}
 	}
 
 	/* now restore the real h_patt.len */
 	h_patt.len += n2;
 
 	// determine the lowest/highest row number for later (scanning of rows for bit flips)
-	h_patt.lowest_row_no = SIZE_MAX;
-	h_patt.highest_row_no = 0;
-	for (size_t l = 0; l < h_patt.len; ++l) {
-		h_patt.lowest_row_no = (h_patt.d_lst[l].row < h_patt.lowest_row_no) 
-			? h_patt.d_lst[l].row 
-			: h_patt.lowest_row_no;
-		h_patt.highest_row_no = (h_patt.d_lst[l].row > h_patt.highest_row_no)
-			? h_patt.d_lst[l].row 
-			: h_patt.highest_row_no;
-	}
+	h_patt.lowest_row_no = 0;
+	h_patt.highest_row_no = 8191;
+//	for (size_t l = 0; l < h_patt.len; ++l) {
+//		h_patt.lowest_row_no = (h_patt.d_lst[l].row < h_patt.lowest_row_no)
+//			? h_patt.d_lst[l].row
+//			: h_patt.lowest_row_no;
+//		h_patt.highest_row_no = (h_patt.d_lst[l].row > h_patt.highest_row_no)
+//			? h_patt.d_lst[l].row
+//			: h_patt.highest_row_no;
+//	}
 
 	// flush_early = false: there's no easy way to pass this information to the sweeping run that's why we ignore it
 	// randomly decide whether we flush immediately after accessing a row
@@ -1102,14 +1077,17 @@ void fuzz_random(HammerSuite *suite, int d, int v, int n2, int hammer_count, boo
 #ifdef FLIPTABLE
 		print_start_attack(&h_patt);
 #endif
-		for (int idx = 0; idx < h_patt.len; idx++)
-			fill_row(suite, &h_patt.d_lst[idx], suite->cfg->d_cfg, 0);
+//		for (int idx = 0; idx < h_patt.len; idx++)
+//			fill_row(suite, &h_patt.d_lst[idx], suite->cfg->d_cfg, 0);
 
 		/* use special function for hammering with special acesses in between */
 		uint64_t time = hammer_it_random(&h_patt, suite->mem, hammer_count, flush_early);
 		fprintf(stderr, "%lu ",time);
 
+		// FIXME: we just scan the whole bank...
+//		fprintf(stderr, "Scanning rows..\n");
 		scan_rows(suite, &h_patt, 0);
+//		fprintf(stderr, "Refilling rows..\n");
 		for (int idx = 0; idx<h_patt.len; idx++) {
 			fill_row(suite, &h_patt.d_lst[idx], suite->cfg->d_cfg, 1);
 		}
@@ -1119,7 +1097,8 @@ void fuzz_random(HammerSuite *suite, int d, int v, int n2, int hammer_count, boo
 #endif
 	}
 	fprintf(stderr, "\n");
-	free(h_patt.d_lst);
+    fprintf(stderr, "Free'ing rows..\n");
+  free(h_patt.d_lst);
 }
 
 void fuzz(HammerSuite *suite, int d, int v)
@@ -1235,7 +1214,7 @@ void fuzzing_session(SessionConfig * cfg, MemoryBuffer * mem, bool random_fuzzin
 	init_addr_mapper(suite->mapper, mem, &suite->d_base, cfg->h_rows);
 
 	while(1) {
-		cfg->aggr_n = random_int(2, 32);
+		cfg->aggr_n = random_int(8, 32);
 		d = random_int(0, 16);
 		v = random_int(1, 4);
 		fprintf(stderr, "[INFO] cfg->aggr_n = %d\n", cfg->aggr_n);

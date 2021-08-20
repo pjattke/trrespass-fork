@@ -93,11 +93,11 @@ int main(int argc, char **argv)
 
 	SessionConfig s_cfg;
 	memset(&s_cfg, 0, sizeof(SessionConfig));
-	if (p->g_flags & F_CONFIG) {
+	if (false) {
 		read_config(&s_cfg, p->conf_file);
 	} else {
 		// HARDCODED values
-		s_cfg.h_rows = PATT_LEN;
+		s_cfg.h_rows = 4096;
 		s_cfg.h_rounds = p->rounds;
 		s_cfg.h_cfg = N_SIDED;
 		s_cfg.d_cfg = RANDOM;
