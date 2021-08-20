@@ -300,13 +300,9 @@ uint64_t hammer_it_random(HammerPattern *patt, MemoryBuffer *mem, int special_ag
   int row_no;
   int row_no2;
 
-  int agg1_cnt = 0;
-
   const int threshold = (fast_rand() % 5) + 2;
   fprintf(stderr, "[INFO] - RH threshold: %d\n", threshold);
 
-  uint64_t cl0,  cl1;
-  cl0 = realtime_now();
   for (int i = 0; i < patt->rounds; i += 2) {
     dummy_row = fast_rand() % max_rows;
     dummy_row2 = fast_rand() % max_rows;
