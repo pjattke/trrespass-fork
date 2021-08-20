@@ -305,9 +305,9 @@ uint64_t hammer_it_random(HammerPattern *patt, MemoryBuffer *mem, int special_ag
   const int threshold = (fast_rand() % 5) + 2;
   fprintf(stderr, "[INFO] - RH threshold: %d\n", threshold);
 
+  uint64_t cl0,  cl1;
+  cl0 = realtime_now();
   for (int i = 0; i < patt->rounds; i += 2) {
-    uint64_t cl0,  cl1;
-    cl0 = realtime_now();
     dummy_row = fast_rand() % max_rows;
     dummy_row2 = fast_rand() % max_rows;
     access_dummy = (int)(fast_rand() % (int)pow(2, threshold));
@@ -315,7 +315,7 @@ uint64_t hammer_it_random(HammerPattern *patt, MemoryBuffer *mem, int special_ag
     row_no = (dummy_row * (access_dummy != 0) + (1-(access_dummy != 0)) * agg1_row) % max_rows;
     row_no2 = (((row_no!=agg1_row)*dummy_row2)+ ((row_no==agg1_row) * agg2_row)) % max_rows;
 
-      if (row_no == agg1_row) agg1_cnt++;
+//      if (row_no == agg1_row) agg1_cnt++;
 //      fprintf(stderr, "row_no = %d\n", row_no);
 //      fprintf(stderr, "row_no2 = %d\n", row_no2);
 
@@ -332,16 +332,15 @@ uint64_t hammer_it_random(HammerPattern *patt, MemoryBuffer *mem, int special_ag
     DRAMAddr acc1 = {.bank = patt->d_lst[0].bank, .row = row_no, .col = 0};
     DRAMAddr acc2 = {.bank = patt->d_lst[0].bank, .row = row_no2, .col = 0};
 
-
     *((volatile char *) phys_2_virt(dram_2_phys(patt->d_lst[2]), mem));
     *((volatile char *) phys_2_virt(dram_2_phys(patt->d_lst[3]), mem));
 //
     clflushopt((volatile void*)phys_2_virt(dram_2_phys(acc1), mem));
     clflushopt((volatile void*)phys_2_virt(dram_2_phys(acc2), mem));
   }
-  fprintf(stderr, "[INFO] agg1_cnt = %d\n", agg1_cnt);
+//  fprintf(stderr, "[INFO] agg1_cnt = %d\n", agg1_cnt);
   cl1 = realtime_now();
-  return (cl1 - cl0)/1000000;
+  return (cl1 - cl0)/patt->rounds;
 }
 
 
