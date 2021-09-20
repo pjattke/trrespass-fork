@@ -95,14 +95,7 @@ char *phys_2_virt(physaddr_t p_addr, MemoryBuffer * mem)
 {
 	physaddr_t p_page = p_addr & ~(((uint64_t) PAGE_SIZE - 1));
 	pte_t src_pte = {.v_addr = 0,.p_addr = p_page };
-	pte_t *res_pte =
-	    (pte_t *) bsearch(&src_pte, mem->physmap, mem->size / PAGE_SIZE,
-			      sizeof(pte_t), phys_cmp);
-
-	if (res_pte == NULL)
-		return (char *)NOT_FOUND;
-
-	return (char *)((uint64_t) res_pte->
-			v_addr | ((uint64_t) p_addr &
-				  (((uint64_t) PAGE_SIZE - 1))));
+	pte_t *res_pte = (pte_t *) bsearch(&src_pte, mem->physmap, mem->size / PAGE_SIZE, sizeof(pte_t), phys_cmp);
+	if (res_pte == NULL) return (char *)NOT_FOUND;
+	return (char *)((uint64_t) res_pte->v_addr | ((uint64_t) p_addr &(((uint64_t) PAGE_SIZE - 1))));
 }

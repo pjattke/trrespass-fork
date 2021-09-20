@@ -12,9 +12,10 @@ static size_t g_rows = 0;
 
 RowMap get_row_map(ADDRMapper * mapper, DRAMAddr * d_addr)
 {
-	size_t idx =
-	    (d_addr->row - g_base_row) * get_banks_cnt() + d_addr->bank;
-	assert(idx < g_bks * g_rows);
+	size_t idx = (d_addr->row - g_base_row) * get_banks_cnt() + d_addr->bank;
+//    fprintf(stderr, "idx = %zu | g_bks = %zu | g_rows = %zu\n", idx, g_bks, g_rows);
+    idx = idx % (g_bks * g_rows);
+//	assert(idx < g_bks * g_rows);
 	return mapper->row_maps[idx];
 }
 
@@ -48,8 +49,7 @@ size_t rmap_idx(size_t bk, size_t row)
 void init_addr_mapper(ADDRMapper * mapper, MemoryBuffer * mem,
 		      DRAMAddr * d_base, size_t h_rows)
 {
-	mapper->row_maps =
-	    (RowMap *) malloc(sizeof(RowMap) * h_rows * get_banks_cnt());
+	mapper->row_maps = (RowMap *) malloc(sizeof(RowMap) * h_rows * get_banks_cnt());
 	mapper->base_row = d_base->row;
 	g_base_row = d_base->row;
 	g_bks = get_banks_cnt();

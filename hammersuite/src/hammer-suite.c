@@ -131,29 +131,32 @@ char *dAddr_2_str(DRAMAddr d_addr, uint8_t fields)
 
 char *hPatt_2_str(HammerPattern * h_patt, int fields)
 {
-#define STR_LEN_PATT 1024
-	static char patt_str[STR_LEN_PATT];
-	char *dAddr_str;
+  static char patt_str[8];
+  return patt_str;
 
-	memset(patt_str, 0x00, STR_LEN_PATT);
-
-	// for compatibility with fuzz(...) method
-	// int len = (h_patt->original_length == 0) ? h_patt->len : h_patt->original_length;
-	int len = h_patt->len;
-
-	for (int i = 0; i < len; i++) {
-		dAddr_str = dAddr_2_str(h_patt->d_lst[i], fields);
-		strcat(patt_str, dAddr_str);
-		if (i + 1 != len) {
-			if (h_patt->original_length != 0 && i > h_patt->original_length) {
-				strcat(patt_str, "|");
-			} else {
-				strcat(patt_str, "/");
-			}
-		}
-
-	}
-	return patt_str;
+//#define STR_LEN_PATT 1024
+//	static char patt_str[STR_LEN_PATT];
+//	char *dAddr_str;
+//
+//	memset(patt_str, 0x00, STR_LEN_PATT);
+//
+//	// for compatibility with fuzz(...) method
+//	// int len = (h_patt->original_length == 0) ? h_patt->len : h_patt->original_length;
+//	int len = h_patt->len;
+//
+//	for (int i = 0; i < len; i++) {
+//		dAddr_str = dAddr_2_str(h_patt->d_lst[i], fields);
+//		strcat(patt_str, dAddr_str);
+//		if (i + 1 != len) {
+//			if (h_patt->original_length != 0 && i > h_patt->original_length) {
+//				strcat(patt_str, "|");
+//			} else {
+//				strcat(patt_str, "/");
+//			}
+//		}
+//
+//	}
+//	return patt_str;
 }
 
 void print_start_attack(HammerPattern *h_patt)
@@ -223,10 +226,18 @@ int random_int(int min, int max)
 }
 
 uint64_t hammer_it(HammerPattern* patt, MemoryBuffer* mem) {
-
-	char** v_lst = (char**) malloc(sizeof(char*)*patt->len);
-	for (size_t i = 0; i < patt->len; i++) {
-		v_lst[i] = phys_2_virt(dram_2_phys(patt->d_lst[i]), mem);
+    size_t len = 36;
+	char** v_lst = (char**) malloc((sizeof(char*)*len));
+	for (size_t i = 0; i < len; i++) {
+      DRAMAddr tmp = {
+          .bank = patt->d_lst[0].bank,
+          .row = rand()%512,
+          .col = 0
+      };
+      v_lst[i] = phys_2_virt(dram_2_phys(tmp), mem);
+      tmp.row += 2;
+      v_lst[i+1] = phys_2_virt(dram_2_phys(tmp), mem);
+      i++;
 	}
 
 	sched_yield();
@@ -241,138 +252,105 @@ uint64_t hammer_it(HammerPattern* patt, MemoryBuffer* mem) {
 		}
 	}
 
-
 	uint64_t cl0, cl1;
 	cl0 = realtime_now();
 	for ( int i = 0; i < patt->rounds;  i++) {
 		mfence();
-		for (size_t j = 0; j < patt->len; j++) {
+		for (size_t j = 0; j < len; j++) {
 			*(volatile char*) v_lst[j];
 		}
-		for (size_t j = 0; j < patt->len; j++) {
+		for (size_t j = 0; j < len; j++) {
 			clflushopt(v_lst[j]);
 		}
 	}
 	cl1 = realtime_now();
 
 	free(v_lst);
+
 	return (cl1-cl0) / 1000000;
 }
 
-uint64_t hammer_it_random(HammerPattern* patt, MemoryBuffer* mem, int special_aggs_target_hc, bool flush_early) {
-	size_t idx;
-	uint64_t special_aggs_cnt = 0;
+static unsigned int g_seed;
 
-	// the probability that we will add special aggressor accesses
-	int probability = (int)ceil(((float)patt->rounds/(float)special_aggs_target_hc));
-
-	// to minimize ops that we do in each round, we precompute a char array of 1M bits (= patt->rounds) where bits are set
-	// according to the probability we need to achieve the given hammering count (special_aggs_target_hc). then during
-	// the loop we just need to check whether the respective bit is set. we use a bit mask (x = 128) which is cyclically
-	// rotated after each loop iteration to mask the current bit (as each char has 1 byte).
-	size_t bytes = patt->rounds/(8*sizeof(char));
-	unsigned char bitseq[bytes];
-	for (size_t i = 0; i < bytes; ++i) {
-		for (size_t j = 0; j < 8; ++j) {
-			bitseq[i] |= ((random_int(0, patt->rounds) % probability == 0) ? 1 : 0) << j;
-		}
-		// printf("%lu: %d\n", i, bitseq[i]);
-	}
-	unsigned char x = 128; // = 0b10000000
-	// for (size_t i = 0; i < 20*8; ++i) {
-		// printf("%d: ", i);
-		// for (int j = 7; j >= 0; --j) {
-		//   printf("%u", (((x >> j) & 1)) ? 1 : 0);
-		// }
-		// printf("\n");
-		// if (i > 0 && i % 8 == 0) printf("\n");
-		// printf("%u", (((bitseq[(i/8)]) & x) > 0)? 1 : 0);
-		// printf("|%zu: %u\n", i, ((*bitseq >> i) & 1));
-		// x = (x >> 1) | (x << (sizeof(x)*8 - 1));
-	// }
-	
-	char** v_lst = (char**) malloc(sizeof(char*)*patt->len);
-	for (size_t i = 0; i < patt->len; i++) {
-		v_lst[i] = phys_2_virt(dram_2_phys(patt->d_lst[i]), mem);
-	}
-
-	sched_yield();
-	if (p->threshold > 0) {
-		uint64_t t0 = 0, t1 = 0;
-		// Threshold value depends on your system
-		while (abs((int64_t) t1 - (int64_t) t0) < p->threshold) {
-			t0 = rdtscp();
-			*(volatile char *)v_lst[0];
-			clflushopt(v_lst[0]);
-			t1 = rdtscp();
-		}
-	}
-
-	uint64_t cl0, cl1;
-	cl0 = realtime_now();
-
-	// define where (i.e., before which access) to interrupt the pattern; we then replace the following accesses
-	// by accesses to the special aggressors
-	const size_t cutoff_index = random_int(0, patt->original_length);
-
-	if (flush_early) {
-		for ( int i = 0; i < patt->rounds;  i++) {
-			mfence();
-			special_aggs_cnt++;
-			// do accesses up to index idx
-			size_t j;
-			for (j = 0; j < cutoff_index; j++) {
-				*(volatile char*) v_lst[j];
-				clflushopt(v_lst[j]);
-			}
-			// do accesses to special aggressors
-			for (size_t k = patt->original_length; 
-					(special_aggs_cnt < special_aggs_target_hc && (bitseq[(i/8)] & x) && k < patt->len); 
-					k++) {
-				*(volatile char*) v_lst[k];
-				clflushopt(v_lst[k]);
-				j++;
-			}
-			// do accesses from index idx+(num_special_aggs) up to end of pattern
-			for (; j < patt->original_length; j++) {
-				*(volatile char*) v_lst[j];
-				clflushopt(v_lst[j]);
-			}
-			x = (x >> 1) | (x << (sizeof(x)*8 - 1));
-		}
-	} else {
-		for ( int i = 0; i < patt->rounds;  i++) {
-			mfence();
-			special_aggs_cnt++;
-			// do accesses up to index idx
-			size_t j;
-			for (j = 0; j < cutoff_index; j++) {
-				*(volatile char*) v_lst[j];
-			}
-			// do accesses to special aggressors
-			for (size_t k = patt->original_length; 
-					(special_aggs_cnt < special_aggs_target_hc && (bitseq[(i/8)] & x) && k < patt->len); 
-					k++) {
-				*(volatile char*) v_lst[k];
-				j++;
-			}
-			// do accesses from index idx+(num_special_aggs) up to end of pattern
-			for (; j < patt->original_length; j++) {
-				*(volatile char*) v_lst[j];
-			}
-			/* flushing */
-			for (size_t j = 0; j < patt->len; j++) {
-				clflushopt(v_lst[j]);
-			}
-			x = (x >> 1) | (x << (sizeof(x)*8 - 1));
-		}
-	}
-
-	cl1 = realtime_now();
-	free(v_lst);
-	return (cl1-cl0) / 1000000;
+void set_seed(int seed) {
+  g_seed = seed;
 }
 
+// Compute a pseudorandom integer.
+// Output value in range [0, 32767]
+size_t fast_rand() {
+  g_seed = (214013*g_seed+2531011);
+  return (g_seed>>16)&0x7FFF;
+}
+
+uint64_t hammer_it_random(HammerPattern *patt, MemoryBuffer *mem, int special_aggs_target_hc, bool flush_early) {
+  char** v_lst = (char**) malloc(sizeof(char*)*(patt->len));
+  for (size_t i = 0; i < patt->len; i++) {
+//  fprintf(stderr, "(%lu): bank, row, col: %lu, %lu, %lu\n", i, patt->d_lst[i].bank, patt->d_lst[i].row, patt->d_lst[i].col);
+    v_lst[i] = phys_2_virt(dram_2_phys(patt->d_lst[i]), mem);
+  }
+
+  patt->rounds = 1100000/patt->len;
+
+  uint64_t cl0, cl1;
+  cl0 = realtime_now();
+
+  if (flush_early) {
+    fprintf(stderr, "[ERROR] - flush_early not supported!\n");
+    exit(1);
+  }
+
+//  const int max_rows = 4096;
+//  int agg1_row = (int)fast_rand(max_rows);
+//  int agg2_row = (int)agg1_row + 2;
+//
+//  patt->d_lst[0].bank = patt->d_lst[0].bank;
+//  patt->d_lst[0].row = agg1_row;
+//  patt->d_lst[0].col = 0;
+//
+//  patt->d_lst[1] = patt->d_lst[0];
+//  patt->d_lst[1].bank = patt->d_lst[0].bank;
+//  patt->d_lst[1].row = agg2_row;
+//  patt->d_lst[1].col = 0;
+
+//  fprintf(stderr, "[INFO] agg1 = %d, %lu, %lu\n", agg1_row, patt->d_lst[0].bank, patt->d_lst[0].col);
+//  fprintf(stderr, "[INFO] agg1 = %d, %lu, %lu\n", agg2_row, patt->d_lst[1].bank, patt->d_lst[1].col);
+
+  const int threshold = (int)pow(2, (fast_rand()%6) + 1);
+//  fprintf(stderr, "[INFO] RH threshold: %d\n", threshold);
+
+//  uint64_t agg_cnt = 0;
+  bool access_dummy;
+  const size_t agg1 = patt->original_length;
+  const size_t agg2 = patt->original_length+1;
+
+  size_t idx1;
+  size_t idx2;
+  for (int i = 0; i < patt->rounds; i++) {
+    mfence();
+    for (size_t j = 0; j < patt->original_length; j+=2) {
+      access_dummy = (fast_rand() % threshold) != 0;
+//      agg_cnt += (1-access_dummy);
+
+      idx1 = access_dummy * j + (1-access_dummy) * agg1;
+//      fprintf(stderr, "idx1 = %lu\n", idx1);
+      *(volatile char*)v_lst[idx1];
+      idx2 = access_dummy * (j+1) + (1-access_dummy) * agg2;
+//      fprintf(stderr, "idx2 = %lu\n", idx2);
+      *(volatile char*)v_lst[idx2];
+
+      clflushopt(v_lst[idx1]);
+      clflushopt(v_lst[idx2]);
+    }
+  }
+
+//  fprintf(stderr, "[INFO] agg1_cnt = %lu/%lu (%f)\n", agg_cnt, patt->rounds*patt->original_length, (double)agg_cnt/((double)patt->rounds*patt->original_length));
+  cl1 = realtime_now();
+
+  free(v_lst);
+
+  return (cl1 - cl0)/patt->rounds;
+}
 
 void __test_fill_random(char *addr, size_t size)
 {
@@ -532,7 +510,15 @@ void scan_random(HammerSuite * suite, HammerPattern * h_patt, size_t adj_rows)
 
 	d_tmp.bank = h_patt->d_lst[0].bank;
 
-	for (size_t row = 0; row < cfg->h_rows; row++) {
+    size_t low = h_patt->d_lst[0].row-2 < 0 ? 0 : h_patt->d_lst[0].row;
+    size_t hi = h_patt->d_lst[1].row+2 > 8191 ? 8191 : h_patt->d_lst[1].row+2;
+    if (low > hi) {
+      size_t tmp = low;
+      low = hi;
+      hi = tmp;
+    }
+
+	for (size_t row = 0; row < 8192; row++) {
 		d_tmp.row = suite->mapper->base_row + row;
 		for (size_t col = 0; col < ROW_SIZE; col += (1 << 6)) {
 			d_tmp.col = col;
@@ -1015,9 +1001,12 @@ void fuzz_random(HammerSuite *suite, int d, int v, int n2, int hammer_count, boo
 	 *     May 2020, Available: http://arxiv.org/abs/2005.13121.
 	 */
 
-	int i,j;
+	size_t i,j;
 	HammerPattern h_patt;
 	SessionConfig *cfg = suite->cfg;
+
+    cfg->aggr_n = 2046;
+//    cfg->aggr_n = 16;
 
 	h_patt.original_length = cfg->aggr_n;
 	h_patt.len = cfg->aggr_n;
@@ -1039,9 +1028,9 @@ void fuzz_random(HammerSuite *suite, int d, int v, int n2, int hammer_count, boo
 
 	fprintf(stderr, "random_pattern = %s\n", (random_pattern) ? "true" : "false");
 	if (random_pattern) {
-		for (size_t k = 0; k < h_patt.len; ++k) {
+		for (size_t k = 0; k < h_patt.len; k++) {
 			h_patt.d_lst[k] = suite->d_base;	
-			h_patt.d_lst[k].row = suite->d_base.row + rand()%512;
+			h_patt.d_lst[k].row = (suite->d_base.row + rand())%4095;
 		}
 	} else {
 		h_patt.d_lst[0] = suite->d_base;
@@ -1061,15 +1050,15 @@ void fuzz_random(HammerSuite *suite, int d, int v, int n2, int hammer_count, boo
 	}
 
 	/* now define addresses for special aggressors that are placed at the pattern's very end */
-	if (n2 > 0) {
+	if (n2 == 2) {
 		h_patt.d_lst[h_patt.len] = suite->d_base;
-		h_patt.d_lst[h_patt.len].row = h_patt.d_lst[h_patt.len-1].row + random_int(1, 128);
-		// fprintf(stderr, "row of special agg1 = %d\n", h_patt.d_lst[h_patt.len].row);
-		for (j = h_patt.len+1; j < (h_patt.len + n2); ++j) {
-			h_patt.d_lst[j] = suite->d_base;
-			h_patt.d_lst[j].row = h_patt.d_lst[j-1].row + v + 1;
-			// fprintf(stderr, "row of special agg2 = %d\n", h_patt.d_lst[j].row);
-		}
+		h_patt.d_lst[h_patt.len].row = random_int(1, 4095);
+        fprintf(stderr, "row of special agg1 = %lu\n", h_patt.d_lst[h_patt.len].row);
+//		for (j = h_patt.len+1; j < (h_patt.len + n2); ++j) {
+        h_patt.d_lst[h_patt.len+1] = suite->d_base;
+		h_patt.d_lst[h_patt.len+1].row = h_patt.d_lst[h_patt.len].row + 2;
+		fprintf(stderr, "row of special agg2 = %lu\n", h_patt.d_lst[h_patt.len+1].row);
+//		}
 	}
 
 	/* now restore the real h_patt.len */
@@ -1107,6 +1096,7 @@ void fuzz_random(HammerSuite *suite, int d, int v, int n2, int hammer_count, boo
 
 		/* use special function for hammering with special acesses in between */
 		uint64_t time = hammer_it_random(&h_patt, suite->mem, hammer_count, flush_early);
+//        uint64_t time = hammer_it(&h_patt, suite->mem);
 		fprintf(stderr, "%lu ",time);
 
 		scan_rows(suite, &h_patt, 0);
@@ -1234,8 +1224,10 @@ void fuzzing_session(SessionConfig * cfg, MemoryBuffer * mem, bool random_fuzzin
 	suite->mapper = (ADDRMapper *) malloc(sizeof(ADDRMapper));
 	init_addr_mapper(suite->mapper, mem, &suite->d_base, cfg->h_rows);
 
-	while(1) {
-		cfg->aggr_n = random_int(2, 32);
+    set_seed(25451);
+
+  while(1) {
+		cfg->aggr_n = random_int(8, 32);
 		d = random_int(0, 16);
 		v = random_int(1, 4);
 		fprintf(stderr, "[INFO] cfg->aggr_n = %d\n", cfg->aggr_n);
